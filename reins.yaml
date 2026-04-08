@@ -1,0 +1,20 @@
+budgets:
+  # Global budget config used by Reins budget engine.
+  # NOTE: current Reins implementation may treat balances as daily period
+  # internally; FAIRYCLAW_REINS_BUDGET_MONTHLY_USD still controls total cap.
+  monthly: $100.00
+  on_exceed: degrade
+  agents:
+    fairyclaw_runtime:
+      monthly: $100.00
+      on_exceed: degrade
+
+modules:
+  budget:
+    enabled: true
+  trace:
+    enabled: true
+
+storage: duckdb
+storage_path: ./.reins/reins.duckdb
+retention_days: 90

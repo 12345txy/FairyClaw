@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     hook_default_timeout_ms: int = 300
     context_token_budget: int = 0
     enable_hook_runtime: bool = False
+    reins_enabled: bool = False
+    reins_budget_monthly_usd: float = 100.0
+    reins_on_exceed: str = "degrade"
     enable_file_upload_event: bool = False
     # Deprecated: kept for backward compatibility with previous naming.
     enable_rag_pipeline: bool = False

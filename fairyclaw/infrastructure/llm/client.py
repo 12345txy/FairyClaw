@@ -9,14 +9,14 @@ This module wraps OpenAI-compatible chat endpoints and handles:
 """
 
 import asyncio
+import importlib
 import json
 import logging
 import os
 from dataclasses import dataclass
 from typing import Any
 
-import httpx
-
+from fairyclaw.config.settings import settings
 from fairyclaw.infrastructure.llm.config import LLMEndpointProfile
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,7 @@ DEFAULT_MAX_RETRIES = 3
 DEFAULT_BASE_DELAY_SECONDS = 2
 TOOL_CHOICE_AUTO = "auto"
 CONTENT_TYPE_JSON = "application/json"
+REINS_AGENT_NAME = "fairyclaw_runtime"
 
 
 @dataclass
@@ -65,6 +66,19 @@ class OpenAICompatibleLLMClient:
         """
         self.profile = profile
         self.fallback_profile = fallback_profile
+        self._sdk_chat_call = self._call_chat_completion_sdk
+        self._api_connection_error: type[Exception] = Exception
+        self._api_timeout_error: type[Exception] = Exception
+        self._api_status_error: type[Exception] = Exception
+        self._async_openai_class: Any = None
+        self._load_openai_symbols()
+        trace_fn = self._load_reins_trace() if settings.reins_enabled else None
+        if trace_fn is not None:
+            self._sdk_chat_call = trace_fn(
+                budget=settings.reins_budget_monthly_usd,
+                on_exceed=settings.reins_on_exceed,
+                agent_name=REINS_AGENT_NAME,
+            )(self._call_chat_completion_sdk)
 
     def is_available(self) -> bool:
         """Check whether API key for primary profile exists in environment.
@@ -144,13 +158,12 @@ class OpenAICompatibleLLMClient:
 
         Raises:
             RuntimeError: Raised when API key is missing or payload contains explicit error.
-            httpx.HTTPStatusError: Raised after retry budget is exhausted.
-            httpx.RequestError: Raised after retry budget is exhausted.
+            APIStatusError: Raised after retry budget is exhausted.
+            APIConnectionError/APITimeoutError: Raised after retry budget is exhausted.
         """
         api_key = os.getenv(profile.api_key_env, "").strip()
         if not api_key:
             raise RuntimeError(f"Missing API key env: {profile.api_key_env}")
-        url = f"{profile.api_base.rstrip('/')}/chat/completions"
         payload = {
             "model": profile.model,
             "messages": messages,
@@ -159,22 +172,23 @@ class OpenAICompatibleLLMClient:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = TOOL_CHOICE_AUTO
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": CONTENT_TYPE_JSON,
-        }
         data: dict[str, Any] = {}
         for attempt in range(DEFAULT_MAX_RETRIES):
             try:
-                async with httpx.AsyncClient(timeout=profile.timeout_seconds) as client:
-                    response = await client.post(url, json=payload, headers=headers)
-                    response.raise_for_status()
-                    data = response.json()
-                    self._raise_if_payload_error(data)
-                    break
-            except httpx.HTTPStatusError as e:
-                status_code = e.response.status_code
-                error_body = e.response.text
+                data = await self._sdk_chat_call(
+                    profile=profile,
+                    api_key=api_key,
+                    payload=payload,
+                    metadata={
+                        "profile": profile.name,
+                        "model": profile.model,
+                    },
+                )
+                self._raise_if_payload_error(data)
+                break
+            except self._api_status_error as e:
+                status_code = getattr(e, "status_code", 0) or 0
+                error_body = self._extract_status_error_body(e)
                 if status_code in RETRYABLE_HTTP_STATUS_CODES and attempt < DEFAULT_MAX_RETRIES - 1:
                     delay = DEFAULT_BASE_DELAY_SECONDS * (2**attempt)
                     logger.warning(
@@ -186,17 +200,15 @@ class OpenAICompatibleLLMClient:
                 if status_code == 400:
                     self._log_bad_request_details(
                         profile=profile,
-                        url=url,
-                        headers=headers,
                         payload=payload,
-                        response=e.response,
+                        error_body=error_body,
                     )
                 logger.error(
                     f"HTTP error {status_code} occurred on profile='{profile.name}' model='{profile.model}': {e}. "
                     f"Body: {error_body}"
                 )
                 raise
-            except httpx.RequestError as e:
+            except (self._api_connection_error, self._api_timeout_error) as e:
                 if attempt < DEFAULT_MAX_RETRIES - 1:
                     delay = DEFAULT_BASE_DELAY_SECONDS * (2**attempt)
                     logger.warning(
@@ -222,11 +234,69 @@ class OpenAICompatibleLLMClient:
         Returns:
             bool: True when fallback should be attempted.
         """
-        if isinstance(exc, httpx.RequestError):
+        if isinstance(exc, (self._api_connection_error, self._api_timeout_error)):
             return True
-        if isinstance(exc, httpx.HTTPStatusError):
-            return exc.response.status_code in RETRYABLE_HTTP_STATUS_CODES
+        if isinstance(exc, self._api_status_error):
+            return ((getattr(exc, "status_code", 0) or 0) in RETRYABLE_HTTP_STATUS_CODES)
         return False
+
+    async def _call_chat_completion_sdk(
+        self,
+        *,
+        profile: LLMEndpointProfile,
+        api_key: str,
+        payload: dict[str, Any],
+        metadata: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Call OpenAI-compatible endpoint using official SDK."""
+        if self._async_openai_class is None:
+            raise RuntimeError("openai SDK is not available; please install project dependencies.")
+        client = self._async_openai_class(
+            base_url=profile.api_base.rstrip("/"),
+            api_key=api_key,
+            timeout=profile.timeout_seconds,
+        )
+        request_args: dict[str, Any] = dict(payload)
+        # Reins/OpenAI instrumentation can use metadata for downstream tracing.
+        if metadata:
+            request_args["metadata"] = metadata
+        completion = await client.chat.completions.create(**request_args)
+        return completion.model_dump()
+
+    def _extract_status_error_body(self, exc: Exception) -> str:
+        """Extract readable body text from OpenAI SDK status error."""
+        response = getattr(exc, "response", None)
+        if response is None:
+            return str(exc)
+        text = getattr(response, "text", None)
+        if isinstance(text, str) and text:
+            return text
+        body = getattr(response, "body", None)
+        if body is not None:
+            try:
+                return json.dumps(body, ensure_ascii=False)
+            except Exception:
+                return str(body)
+        return str(exc)
+
+    def _load_openai_symbols(self) -> None:
+        """Load OpenAI SDK symbols lazily to avoid hard import-time failures."""
+        try:
+            openai_mod = importlib.import_module("openai")
+        except Exception:
+            return
+        self._async_openai_class = getattr(openai_mod, "AsyncOpenAI", None)
+        self._api_connection_error = getattr(openai_mod, "APIConnectionError", Exception)
+        self._api_timeout_error = getattr(openai_mod, "APITimeoutError", Exception)
+        self._api_status_error = getattr(openai_mod, "APIStatusError", Exception)
+
+    def _load_reins_trace(self) -> Any | None:
+        """Load Reins trace decorator lazily; return None when unavailable."""
+        try:
+            reins_mod = importlib.import_module("reins")
+        except Exception:
+            return None
+        return getattr(reins_mod, "trace", None)
 
     def _parse_chat_result(self, data: dict[str, Any]) -> ChatResult:
         """Parse raw API payload into ChatResult structure.
@@ -281,24 +351,23 @@ class OpenAICompatibleLLMClient:
     def _log_bad_request_details(
         self,
         profile: LLMEndpointProfile,
-        url: str,
-        headers: dict[str, str],
         payload: dict[str, Any],
-        response: httpx.Response,
+        error_body: str,
     ) -> None:
         """Log rich context for HTTP 400 responses to debug schema/argument issues."""
-        safe_headers = dict(headers)
-        if "Authorization" in safe_headers:
-            safe_headers["Authorization"] = "Bearer ***"
+        url = f"{profile.api_base.rstrip('/')}/chat/completions"
+        safe_headers = {
+            "Authorization": "Bearer ***",
+            "Content-Type": CONTENT_TYPE_JSON,
+        }
         error_details = (
             "=== HTTP 400 BAD REQUEST DETAILED LOG ===\n"
             f"URL: {url}\n"
             f"Profile: {profile.name}\n"
             f"Model: {profile.model}\n"
             f"Request Headers: {json.dumps(safe_headers, indent=2)}\n"
-            f"Response Status: {response.status_code}\n"
-            f"Response Headers: {json.dumps(dict(response.headers), indent=2)}\n"
-            f"Response Body: {response.text}\n"
+            "Response Status: 400\n"
+            f"Response Body: {error_body}\n"
             f"Request Payload:\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n"
             "==========================================="
         )

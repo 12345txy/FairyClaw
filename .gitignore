@@ -175,3 +175,6 @@ cython_debug/
 data/
 workspace/
 test/
+
+# Reins (local DuckDB ledger; may contain usage traces)
+.reins/
