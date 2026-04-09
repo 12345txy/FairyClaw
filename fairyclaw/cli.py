@@ -242,18 +242,6 @@ def _candidate_repo_config_dir() -> Path | None:
     return None
 
 
-def _pick_source(repo_config_dir: Path | None, name: str, example_name: str) -> Path | None:
-    if repo_config_dir is None:
-        return None
-    plain = repo_config_dir / name
-    if plain.exists():
-        return plain
-    example = repo_config_dir / example_name
-    if example.exists():
-        return example
-    return None
-
-
 def _bundled_config_template(name: str) -> Path | None:
     """Shipped copies of repo `config/*.example` for wheel installs / unknown cwd."""
     p = package_dir() / "config_templates" / name
@@ -294,6 +282,23 @@ def _llm_yaml_missing_profiles(path: Path) -> bool:
     return False
 
 
+def _ensure_repo_config_from_examples(repo_config_dir: Path | None) -> None:
+    """Cold start in repo: copy *.example -> real files under config/ before syncing to runtime."""
+    if repo_config_dir is None or not repo_config_dir.is_dir():
+        return
+    try:
+        env_plain = repo_config_dir / "fairyclaw.env"
+        env_ex = repo_config_dir / "fairyclaw.env.example"
+        if env_ex.exists() and (not env_plain.exists() or _env_file_missing_content(env_plain)):
+            shutil.copy2(env_ex, env_plain)
+        llm_plain = repo_config_dir / "llm_endpoints.yaml"
+        llm_ex = repo_config_dir / "llm_endpoints.yaml.example"
+        if llm_ex.exists() and (not llm_plain.exists() or _llm_yaml_missing_profiles(llm_plain)):
+            shutil.copy2(llm_ex, llm_plain)
+    except OSError as exc:
+        print(f"Warning: could not seed repo config under {repo_config_dir}: {exc}", flush=True)
+
+
 def _sync_runtime_config(runtime_home: Path, no_sync_config: bool) -> tuple[Path, dict[str, str]]:
     runtime_config_dir = runtime_home / "config"
     runtime_config_dir.mkdir(parents=True, exist_ok=True)
@@ -303,8 +308,18 @@ def _sync_runtime_config(runtime_home: Path, no_sync_config: bool) -> tuple[Path
     (runtime_data_dir / "files").mkdir(parents=True, exist_ok=True)
 
     repo_config_dir = _candidate_repo_config_dir()
-    src_env = _pick_source(repo_config_dir, "fairyclaw.env", "fairyclaw.env.example")
-    src_llm = _pick_source(repo_config_dir, "llm_endpoints.yaml", "llm_endpoints.yaml.example")
+    if not no_sync_config:
+        _ensure_repo_config_from_examples(repo_config_dir)
+
+    src_env: Path | None = None
+    src_llm: Path | None = None
+    if repo_config_dir is not None:
+        _ep = repo_config_dir / "fairyclaw.env"
+        if _ep.exists() and not _env_file_missing_content(_ep):
+            src_env = _ep
+        _lp = repo_config_dir / "llm_endpoints.yaml"
+        if _lp.exists() and not _llm_yaml_missing_profiles(_lp):
+            src_llm = _lp
 
     env_target = runtime_config_dir / "fairyclaw.env"
     llm_target = runtime_config_dir / "llm_endpoints.yaml"
@@ -318,7 +333,6 @@ def _sync_runtime_config(runtime_home: Path, no_sync_config: bool) -> tuple[Path
                 shutil.copy2(bundled_env, env_target)
             elif not env_target.exists():
                 env_target.write_text("", encoding="utf-8")
-        # Older CLI wrote an empty fairyclaw.env; or repo file may be empty — seed from bundle.
         _be = _bundled_config_template("fairyclaw.env.example")
         if _be is not None and _env_file_missing_content(env_target):
             shutil.copy2(_be, env_target)

@@ -30,23 +30,17 @@ User / Bot client
 
 ## 2. Configuration
 
-`fairyclaw start` supports cold start from examples:
+`fairyclaw start` cold start (from a checkout with `config/`):
 
-- if `config/fairyclaw.env` is missing, it uses `config/fairyclaw.env.example`
-- if `config/llm_endpoints.yaml` is missing, it uses `config/llm_endpoints.yaml.example`
+1. Writes `config/fairyclaw.env` from `config/fairyclaw.env.example` when the former is missing or empty/invalid.
+2. Writes `config/llm_endpoints.yaml` from `config/llm_endpoints.yaml.example` when the former is missing or empty/invalid.
+3. Copies those repo files into `~/.fairyclaw/config/` (override with `FAIRYCLAW_RUNTIME_HOME`).
 
-Both processes then read unified runtime config under `~/.fairyclaw` (override with `FAIRYCLAW_RUNTIME_HOME`).
+You can still copy manually if you prefer:
 
 ```bash
 cp config/fairyclaw.env.example config/fairyclaw.env
-# Then edit config/fairyclaw.env to set required values
-```
-
-Also copy the LLM endpoints config:
-
-```bash
 cp config/llm_endpoints.yaml.example config/llm_endpoints.yaml
-# Edit to point at your LLM provider
 ```
 
 ### 2.1 Required settings (must change before production)
