@@ -232,14 +232,16 @@ def _parse_env_file(path: Path) -> dict[str, str]:
     return values
 
 
-def _candidate_repo_config_dir() -> Path | None:
-    cwd_config = Path.cwd() / "config"
-    if cwd_config.exists():
-        return cwd_config
-    parent_config = package_dir().parent / "config"
-    if parent_config.exists():
-        return parent_config
-    return None
+def _resolve_project_config_dir() -> Path:
+    """Directory .../config: prefer ./config, else package-root config, else create ./config."""
+    cwd_cfg = (Path.cwd() / "config").resolve()
+    if cwd_cfg.is_dir():
+        return cwd_cfg
+    pkg_cfg = (package_dir().parent / "config").resolve()
+    if pkg_cfg.is_dir():
+        return pkg_cfg
+    cwd_cfg.mkdir(parents=True, exist_ok=True)
+    return cwd_cfg
 
 
 def _bundled_config_template(name: str) -> Path | None:
@@ -282,10 +284,8 @@ def _llm_yaml_missing_profiles(path: Path) -> bool:
     return False
 
 
-def _ensure_repo_config_from_examples(repo_config_dir: Path | None) -> None:
-    """Cold start in repo: copy *.example -> real files under config/ before syncing to runtime."""
-    if repo_config_dir is None or not repo_config_dir.is_dir():
-        return
+def _ensure_repo_config_from_examples(repo_config_dir: Path) -> None:
+    """Cold start: copy *.example -> real files under config/."""
     try:
         env_plain = repo_config_dir / "fairyclaw.env"
         env_ex = repo_config_dir / "fairyclaw.env.example"
@@ -299,60 +299,31 @@ def _ensure_repo_config_from_examples(repo_config_dir: Path | None) -> None:
         print(f"Warning: could not seed repo config under {repo_config_dir}: {exc}", flush=True)
 
 
-def _sync_runtime_config(runtime_home: Path, no_sync_config: bool) -> tuple[Path, dict[str, str]]:
-    runtime_config_dir = runtime_home / "config"
-    runtime_config_dir.mkdir(parents=True, exist_ok=True)
-    runtime_data_dir = runtime_home / "data"
-    runtime_data_dir.mkdir(parents=True, exist_ok=True)
-    (runtime_data_dir / "logs").mkdir(parents=True, exist_ok=True)
-    (runtime_data_dir / "files").mkdir(parents=True, exist_ok=True)
-
-    repo_config_dir = _candidate_repo_config_dir()
-    if not no_sync_config:
-        _ensure_repo_config_from_examples(repo_config_dir)
-
-    src_env: Path | None = None
-    src_llm: Path | None = None
-    if repo_config_dir is not None:
-        _ep = repo_config_dir / "fairyclaw.env"
-        if _ep.exists() and not _env_file_missing_content(_ep):
-            src_env = _ep
-        _lp = repo_config_dir / "llm_endpoints.yaml"
-        if _lp.exists() and not _llm_yaml_missing_profiles(_lp):
-            src_llm = _lp
-
-    env_target = runtime_config_dir / "fairyclaw.env"
-    llm_target = runtime_config_dir / "llm_endpoints.yaml"
+def _prepare_project_config(no_sync_config: bool) -> tuple[Path, Path, dict[str, str]]:
+    """Seed config/*.example -> real files under project config/, then parse fairyclaw.env."""
+    config_dir = _resolve_project_config_dir()
+    project_root = config_dir.parent
 
     if not no_sync_config:
-        if src_env is not None:
-            shutil.copy2(src_env, env_target)
-        else:
-            bundled_env = _bundled_config_template("fairyclaw.env.example")
-            if bundled_env is not None and not env_target.exists():
-                shutil.copy2(bundled_env, env_target)
-            elif not env_target.exists():
-                env_target.write_text("", encoding="utf-8")
-        _be = _bundled_config_template("fairyclaw.env.example")
-        if _be is not None and _env_file_missing_content(env_target):
-            shutil.copy2(_be, env_target)
-        if src_llm is not None:
-            shutil.copy2(src_llm, llm_target)
-        else:
-            bundled_llm = _bundled_config_template("llm_endpoints.yaml.example")
-            need_bundled_llm = not llm_target.exists() or (
-                bundled_llm is not None and _llm_yaml_missing_profiles(llm_target)
-            )
-            if bundled_llm is not None and need_bundled_llm:
-                shutil.copy2(bundled_llm, llm_target)
-            elif not llm_target.exists():
+        _ensure_repo_config_from_examples(config_dir)
+        env_f = config_dir / "fairyclaw.env"
+        if _env_file_missing_content(env_f):
+            _be = _bundled_config_template("fairyclaw.env.example")
+            if _be is not None:
+                shutil.copy2(_be, env_f)
+        llm_f = config_dir / "llm_endpoints.yaml"
+        if _llm_yaml_missing_profiles(llm_f):
+            _bl = _bundled_config_template("llm_endpoints.yaml.example")
+            if _bl is not None:
+                shutil.copy2(_bl, llm_f)
+            elif not llm_f.exists():
                 raise RuntimeError(
                     "Missing LLM endpoints config and bundled template; reinstall fairyclaw or "
-                    "provide config/llm_endpoints.yaml (or llm_endpoints.yaml.example)."
+                    "add config/llm_endpoints.yaml.example."
                 )
 
-    values = _parse_env_file(env_target)
-    return runtime_config_dir, values
+    values = _parse_env_file(config_dir / "fairyclaw.env")
+    return project_root, config_dir, values
 
 
 def _frontend_root() -> Path | None:
@@ -444,8 +415,12 @@ def _launch_dual_processes(
     *,
     health_wait_seconds: float,
     skip_health_check: bool,
+    cwd: Path | None,
 ) -> int:
     preexec = os.setsid if os.name == "posix" else None
+    popen_kw: dict[str, object] = {}
+    if cwd is not None:
+        popen_kw["cwd"] = str(cwd)
     biz_cmd = [
         sys.executable,
         "-m",
@@ -467,7 +442,7 @@ def _launch_dual_processes(
         str(gateway_port),
     ]
 
-    biz = subprocess.Popen(biz_cmd, env=env, preexec_fn=preexec)
+    biz = subprocess.Popen(biz_cmd, env=env, preexec_fn=preexec, **popen_kw)
     _TRACKED_CHILDREN.append(biz)
     try:
         health_url = f"http://127.0.0.1:{business_port}/healthz"
@@ -480,7 +455,7 @@ def _launch_dual_processes(
                 )
         else:
             _wait_for_business_ready(biz, health_url, timeout_seconds=health_wait_seconds)
-        gw = subprocess.Popen(gw_cmd, env=env, preexec_fn=preexec)
+        gw = subprocess.Popen(gw_cmd, env=env, preexec_fn=preexec, **popen_kw)
         _TRACKED_CHILDREN.append(gw)
     except Exception:
         if biz.poll() is None:
@@ -548,8 +523,11 @@ def _read_token(config_values: dict[str, str]) -> str:
 
 
 def _start(args: argparse.Namespace) -> int:
-    runtime_home = Path(os.getenv("FAIRYCLAW_RUNTIME_HOME", "~/.fairyclaw")).expanduser()
-    runtime_config_dir, config_values = _sync_runtime_config(runtime_home, no_sync_config=args.no_sync_config)
+    project_root, config_dir, config_values = _prepare_project_config(no_sync_config=args.no_sync_config)
+    data_dir = project_root / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "logs").mkdir(parents=True, exist_ok=True)
+    (data_dir / "files").mkdir(parents=True, exist_ok=True)
     token = _read_token(config_values)
 
     web_dir = _frontend_root()
@@ -571,17 +549,15 @@ def _start(args: argparse.Namespace) -> int:
         if key and value and key not in env:
             env[key] = value
 
-    # fairyclaw.env often contains relative paths like ./config/llm_endpoints.yaml. Those merge
-    # above and would otherwise win over setdefault(), making the runtime load the repo copy (or
-    # nothing) instead of ~/.fairyclaw — pin authoritative paths for this command.
-    runtime_data_dir = (runtime_home / "data").resolve()
-    runtime_llm_path = (runtime_config_dir / "llm_endpoints.yaml").resolve()
-    env["FAIRYCLAW_DATA_DIR"] = str(runtime_data_dir)
-    env["FAIRYCLAW_LLM_ENDPOINTS_CONFIG_PATH"] = str(runtime_llm_path)
+    # Pin paths to project config/ and data/ so merges from fairyclaw.env cannot point elsewhere.
+    data_resolved = data_dir.resolve()
+    llm_resolved = (config_dir / "llm_endpoints.yaml").resolve()
+    env["FAIRYCLAW_DATA_DIR"] = str(data_resolved)
+    env["FAIRYCLAW_LLM_ENDPOINTS_CONFIG_PATH"] = str(llm_resolved)
     if "FAIRYCLAW_DATABASE_URL" not in os.environ:
-        env["FAIRYCLAW_DATABASE_URL"] = f"sqlite+aiosqlite:///{runtime_data_dir / 'fairyclaw.db'}"
+        env["FAIRYCLAW_DATABASE_URL"] = f"sqlite+aiosqlite:///{data_resolved / 'fairyclaw.db'}"
     if "FAIRYCLAW_LOG_FILE_PATH" not in os.environ:
-        env["FAIRYCLAW_LOG_FILE_PATH"] = str(runtime_data_dir / "logs" / "fairyclaw.log")
+        env["FAIRYCLAW_LOG_FILE_PATH"] = str(data_resolved / "logs" / "fairyclaw.log")
 
     business_port = args.business_port
     env["FAIRYCLAW_HOST"] = "0.0.0.0"
@@ -605,6 +581,7 @@ def _start(args: argparse.Namespace) -> int:
         gateway_port=gateway_port,
         health_wait_seconds=float(args.health_wait_seconds),
         skip_health_check=bool(args.skip_health_check),
+        cwd=project_root,
     )
 
 
@@ -615,7 +592,11 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--skip-build", action="store_true", help="Skip npm build")
     start.add_argument("--force-build", action="store_true", help="Force npm build when web/ is present")
     start.add_argument("--no-proxy", action="store_true", help="Disable proxy env for child processes")
-    start.add_argument("--no-sync-config", action="store_true", help="Do not copy config from repo into runtime home")
+    start.add_argument(
+        "--no-sync-config",
+        action="store_true",
+        help="Do not seed config/ from *.example or bundled templates",
+    )
     start.add_argument("--vite-gateway-base-url", default=None, help="Override VITE_GATEWAY_BASE_URL for build")
     start.add_argument("--business-port", type=int, default=16000, help="Business process port (default: 16000)")
     start.add_argument(

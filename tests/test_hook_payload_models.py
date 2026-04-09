@@ -203,7 +203,7 @@ def test_before_llm_hook_demo_reads_typed_history_ir() -> None:
     assert result.patched_payload is payload
 
 
-def test_before_llm_hook_filters_historical_tool_rounds_for_user_turn() -> None:
+def test_before_llm_hook_preserves_tool_round_suffix_when_rebuilding_user_turn() -> None:
     payload = BeforeLlmCallHookPayload(
         turn=LlmTurnContext(
             llm_messages=[
@@ -244,7 +244,9 @@ def test_before_llm_hook_filters_historical_tool_rounds_for_user_turn() -> None:
         )
     )
     assert result.patched_payload is not None
-    assert all(not isinstance(item, ToolCallRound) for item in result.patched_payload.turn.history_items)
+    # Latest assistant + tool rounds are kept as one protected suffix so provider messages stay consistent
+    # (see context_compression: do not strip ToolCallRound globally).
+    assert any(isinstance(item, ToolCallRound) for item in result.patched_payload.turn.history_items)
     rebuilt_messages = result.patched_payload.turn.llm_messages
     assert rebuilt_messages[-1].role == "user"
 

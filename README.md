@@ -80,10 +80,10 @@ fairyclaw start
 `fairyclaw start` defaults:
 - business: `0.0.0.0:16000`
 - gateway/web: `0.0.0.0:8081` (`/app`)
-- runtime home: `~/.fairyclaw` (override with `FAIRYCLAW_RUNTIME_HOME`)
+- config: project `config/` (resolved from the current working directory; created if missing); state under project `data/`
 - if those ports are still held by a previous uvicorn, stale listeners are stopped automatically (`lsof`/`fuser`); use `--no-kill-stale` to disable
 
-Cold start when a repo `config/` directory exists: `fairyclaw start` first copies `config/fairyclaw.env.example` → `config/fairyclaw.env` and `config/llm_endpoints.yaml.example` → `config/llm_endpoints.yaml` when the target file is missing or empty/invalid, then copies those repo files into `~/.fairyclaw/config/`. If there is no repo `config/` (e.g. wheel-only install), it uses templates shipped inside the `fairyclaw` package instead.
+Cold start: `fairyclaw start` seeds `config/fairyclaw.env` from `config/fairyclaw.env.example` and `config/llm_endpoints.yaml` from `config/llm_endpoints.yaml.example` when a target file is missing or empty/invalid. The running process reads and writes those same paths (including API/UI updates), so changes stay in the repo tree. If `config/` is absent (e.g. wheel-only install), it is created and bundled templates inside the `fairyclaw` package are used when needed.
 
 If needed, also set `FAIRYCLAW_API_TOKEN` before startup to override the default placeholder token used by the web gateway auth.
 

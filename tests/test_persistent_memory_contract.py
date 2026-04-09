@@ -36,8 +36,26 @@ class FakeRepo:
             ),
         ]
 
-    async def add_session_event(self, session_id: str, role: str, content: list[dict[str, object]]) -> None:
-        self.session_events.append({"session_id": session_id, "role": role, "content": content})
+    async def add_session_event(
+        self,
+        session_id: str,
+        role: str,
+        content: list[dict[str, object]],
+        *,
+        usage_prompt_tokens: int | None = None,
+        usage_completion_tokens: int | None = None,
+        usage_total_tokens: int | None = None,
+    ) -> None:
+        self.session_events.append(
+            {
+                "session_id": session_id,
+                "role": role,
+                "content": content,
+                "usage_prompt_tokens": usage_prompt_tokens,
+                "usage_completion_tokens": usage_completion_tokens,
+                "usage_total_tokens": usage_total_tokens,
+            }
+        )
 
     async def add_operation_event(
         self,
@@ -45,6 +63,10 @@ class FakeRepo:
         tool_name: str,
         tool_args: dict[str, str],
         tool_result: str,
+        *,
+        usage_prompt_tokens: int | None = None,
+        usage_completion_tokens: int | None = None,
+        usage_total_tokens: int | None = None,
     ) -> None:
         self.operation_events.append(
             {
@@ -52,6 +74,9 @@ class FakeRepo:
                 "tool_name": tool_name,
                 "tool_args": tool_args,
                 "tool_result": tool_result,
+                "usage_prompt_tokens": usage_prompt_tokens,
+                "usage_completion_tokens": usage_completion_tokens,
+                "usage_total_tokens": usage_total_tokens,
             }
         )
 

@@ -34,7 +34,8 @@ User / Bot client
 
 1. Writes `config/fairyclaw.env` from `config/fairyclaw.env.example` when the former is missing or empty/invalid.
 2. Writes `config/llm_endpoints.yaml` from `config/llm_endpoints.yaml.example` when the former is missing or empty/invalid.
-3. Copies those repo files into `~/.fairyclaw/config/` (override with `FAIRYCLAW_RUNTIME_HOME`).
+
+The server reads and persists settings to those project paths (and `data/` for SQLite, logs, uploads). There is no separate copy under `~/.fairyclaw`.
 
 You can still copy manually if you prefer:
 
