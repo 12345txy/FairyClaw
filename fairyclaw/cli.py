@@ -260,6 +260,24 @@ def _bundled_config_template(name: str) -> Path | None:
     return p if p.exists() else None
 
 
+def _env_file_missing_content(path: Path) -> bool:
+    """True if file is missing, blank, or has no KEY=value lines (comments-only counts as empty)."""
+    if not path.exists():
+        return True
+    text = path.read_text(encoding="utf-8")
+    stripped = text.strip()
+    if not stripped:
+        return True
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _val = line.split("=", 1)
+        if key.strip():
+            return False
+    return True
+
+
 def _llm_yaml_missing_profiles(path: Path) -> bool:
     """True if file is missing usable profile entries (e.g. old buggy cold start wrote profiles: {})."""
     try:
@@ -300,6 +318,10 @@ def _sync_runtime_config(runtime_home: Path, no_sync_config: bool) -> tuple[Path
                 shutil.copy2(bundled_env, env_target)
             elif not env_target.exists():
                 env_target.write_text("", encoding="utf-8")
+        # Older CLI wrote an empty fairyclaw.env; or repo file may be empty — seed from bundle.
+        _be = _bundled_config_template("fairyclaw.env.example")
+        if _be is not None and _env_file_missing_content(env_target):
+            shutil.copy2(_be, env_target)
         if src_llm is not None:
             shutil.copy2(src_llm, llm_target)
         else:

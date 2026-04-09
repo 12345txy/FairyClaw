@@ -83,7 +83,7 @@ fairyclaw start
 - runtime home: `~/.fairyclaw` (override with `FAIRYCLAW_RUNTIME_HOME`)
 - if those ports are still held by a previous uvicorn, stale listeners are stopped automatically (`lsof`/`fuser`); use `--no-kill-stale` to disable
 
-If `config/fairyclaw.env` or `config/llm_endpoints.yaml` is missing, startup bootstraps from corresponding `*.example` files. It then syncs repo `config/` into runtime config.
+If `config/fairyclaw.env` or `config/llm_endpoints.yaml` is missing, startup bootstraps from corresponding `*.example` files (or from templates shipped inside the `fairyclaw` package). It then syncs repo `config/` into runtime config under `~/.fairyclaw/config/`. If those runtime files exist but are empty, they are re-seeded from the same templates.
 
 If needed, also set `FAIRYCLAW_API_TOKEN` before startup to override the default placeholder token used by the web gateway auth.
 
