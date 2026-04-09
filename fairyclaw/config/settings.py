@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/fairyclaw.db"
     data_dir: str = "./data"
     host: str = "0.0.0.0"
-    port: int = 8000
+    port: int = 16000
     llm_endpoints_config_path: str = str(PROJECT_ROOT / "config/llm_endpoints.yaml")
     filesystem_root_dir: str | None = None
     log_level: str = "INFO"
@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     gateway_host: str = "0.0.0.0"
     gateway_port: int = 8081
     gateway_id: str = "gw_local"
-    gateway_bridge_url: str = "ws://127.0.0.1:8000/internal/gateway/ws"
+    gateway_bridge_url: str = "ws://127.0.0.1:16000/internal/gateway/ws"
     gateway_reconnect_seconds: float = 1.0
     # OneBot: read from same env files as FAIRYCLAW_*; supports unprefixed ONEBOT_* (not visible to raw os.getenv).
     onebot_session_cmd_prefix: str = Field(

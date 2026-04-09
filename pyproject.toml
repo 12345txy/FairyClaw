@@ -31,10 +31,16 @@ dependencies = [
 # Local neural embeddings (pulls PyTorch + sentence-transformers; not required for hashing or API embeddings).
 embedding-local = ["sentence-transformers>=3.0.1"]
 
+[project.scripts]
+fairyclaw = "fairyclaw.cli:main"
+
 [tool.setuptools]
 packages = ["fairyclaw"]
+
+[tool.setuptools.package-data]
+fairyclaw = ["web_dist/**"]
 
 [tool.uvicorn]
 factory = false
 host = "0.0.0.0"
-port = 8000
+port = 16000

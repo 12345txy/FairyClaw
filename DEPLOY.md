@@ -1,8 +1,8 @@
 # Deployment Guide
 
-FairyClaw runs as **two separate processes** that share a single configuration file:
+FairyClaw runs as **two separate processes** (Business + Gateway). You can launch them with one command (`fairyclaw start`) or as separate services in production.
 
-- **Business** (`fairyclaw/main.py`) — the agent runtime, event bus, planner, and bridge server. Default port `8000`. Should only be reachable from the Gateway process (internal network or same host).
+- **Business** (`fairyclaw/main.py`) — the agent runtime, event bus, planner, and bridge server. Default port `16000`. Should only be reachable from the Gateway process (internal network or same host).
 - **Gateway** (`fairyclaw/gateway/main.py`) — user-facing adapters (HTTP API, OneBot/NapCat, etc.). Default port `8081`. This is the port you expose externally.
 
 ```
@@ -10,9 +10,9 @@ User / Bot client
      │
      ▼
 [Gateway :8081]
-     │  WebSocket Bridge (ws://localhost:8000/internal/gateway/ws)
+    │  WebSocket Bridge (ws://localhost:16000/internal/gateway/ws)
      ▼
-[Business :8000]
+[Business :16000]
      │
      ▼
 [LLM API / tools / DB]
@@ -30,7 +30,12 @@ User / Bot client
 
 ## 2. Configuration
 
-Both processes read from **one shared env file**: `config/fairyclaw.env`.
+`fairyclaw start` supports cold start from examples:
+
+- if `config/fairyclaw.env` is missing, it uses `config/fairyclaw.env.example`
+- if `config/llm_endpoints.yaml` is missing, it uses `config/llm_endpoints.yaml.example`
+
+Both processes then read unified runtime config under `~/.fairyclaw` (override with `FAIRYCLAW_RUNTIME_HOME`).
 
 ```bash
 cp config/fairyclaw.env.example config/fairyclaw.env
@@ -48,8 +53,9 @@ cp config/llm_endpoints.yaml.example config/llm_endpoints.yaml
 
 | Variable | Description |
 |---|---|
-| `FAIRYCLAW_API_TOKEN` | Bearer token for the Gateway's HTTP API. Replace the placeholder with a strong random string. |
+| `FAIRYCLAW_API_TOKEN` | Bearer token for the Gateway's HTTP API / WebSocket auth. Replace the placeholder with a strong random string. |
 | `FAIRYCLAW_BRIDGE_TOKEN` | Shared secret between Business and Gateway. Must match on both sides. |
+| `OPENAI_API_KEY` | LLM key expected by default `config/llm_endpoints.yaml*` (`api_key_env: OPENAI_API_KEY`). |
 
 Generate strong tokens with:
 
@@ -64,7 +70,7 @@ openssl rand -hex 32
 | Variable | Default | Description |
 |---|---|---|
 | `FAIRYCLAW_HOST` | `0.0.0.0` | Business bind address. |
-| `FAIRYCLAW_PORT` | `8000` | Business port. Keep internal — do not expose directly. |
+| `FAIRYCLAW_PORT` | `16000` | Business port. Keep internal — do not expose directly. |
 | `FAIRYCLAW_DATABASE_URL` | `sqlite+aiosqlite:///./data/fairyclaw.db` | SQLite default. Set a PostgreSQL URL for production. |
 | `FAIRYCLAW_DATA_DIR` | `./data` | Directory for DB, logs, and uploaded files. |
 | `FAIRYCLAW_LLM_ENDPOINTS_CONFIG_PATH` | `./config/llm_endpoints.yaml` | Path to LLM provider config. |
@@ -95,7 +101,7 @@ During the **transition period**, the old flat keys (`FAIRYCLAW_EXECUTION_TIMEOU
 | `FAIRYCLAW_GATEWAY_HOST` | `0.0.0.0` | Gateway bind address. |
 | `FAIRYCLAW_GATEWAY_PORT` | `8081` | Gateway port. Expose this to users / reverse proxy. |
 | `FAIRYCLAW_GATEWAY_ID` | `gw_local` | Unique identifier for this Gateway instance. |
-| `FAIRYCLAW_GATEWAY_BRIDGE_URL` | `ws://127.0.0.1:8000/internal/gateway/ws` | URL Gateway uses to connect to Business. |
+| `FAIRYCLAW_GATEWAY_BRIDGE_URL` | `ws://127.0.0.1:16000/internal/gateway/ws` | URL Gateway uses to connect to Business. |
 
 ### 2.4 OneBot adapter settings
 
@@ -117,12 +123,23 @@ cd /opt/fairyclaw
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+
+# Required by default llm_endpoints config
+export OPENAI_API_KEY="your_openai_api_key"
 ```
 
-Start Business (keep this in the background or managed by systemd):
+### 3.1 Recommended: all-in-one start
 
 ```bash
-uvicorn fairyclaw.main:app --host 0.0.0.0 --port 8000
+fairyclaw start
+```
+
+### 3.2 Manual split start (if you need separate supervisors)
+
+Start Business:
+
+```bash
+uvicorn fairyclaw.main:app --host 0.0.0.0 --port 16000
 ```
 
 Start Gateway in a second terminal:
@@ -131,7 +148,7 @@ Start Gateway in a second terminal:
 uvicorn fairyclaw.gateway.main:app --host 0.0.0.0 --port 8081
 ```
 
-### 3.1 systemd units (recommended for production)
+### 3.3 systemd units (recommended for production)
 
 **`/etc/systemd/system/fairyclaw-business.service`:**
 
@@ -144,7 +161,7 @@ After=network.target
 User=fairyclaw
 WorkingDirectory=/opt/fairyclaw
 EnvironmentFile=/opt/fairyclaw/config/fairyclaw.env
-ExecStart=/opt/fairyclaw/.venv/bin/uvicorn fairyclaw.main:app --host 0.0.0.0 --port 8000
+ExecStart=/opt/fairyclaw/.venv/bin/uvicorn fairyclaw.main:app --host 0.0.0.0 --port 16000
 Restart=on-failure
 
 [Install]
@@ -278,4 +295,4 @@ server {
 }
 ```
 
-Keep the Business port (`8000`) behind the firewall — only the Gateway needs to reach it.
+Keep the Business port (`16000`) behind the firewall — only the Gateway needs to reach it.

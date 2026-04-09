@@ -70,19 +70,24 @@ Keep **[AI_SYSTEM_GUIDE.md](AI_SYSTEM_GUIDE.md)** and this **README** aligned wi
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 
-# 2. Configure
-cp config/fairyclaw.env.example config/fairyclaw.env
-cp config/llm_endpoints.yaml.example config/llm_endpoints.yaml
-# Edit both files: set your LLM API endpoint, tokens, etc.
+# 2. Export your LLM API key (matches config/llm_endpoints.yaml*.api_key_env)
+export OPENAI_API_KEY="your_openai_api_key"
 
-# 3. Start the Business process
-uvicorn fairyclaw.main:app --host 0.0.0.0 --port 8000
-
-# 4. Start the Gateway process (separate terminal)
-uvicorn fairyclaw.gateway.main:app --host 0.0.0.0 --port 8081
+# 3. Start all-in-one (build web + start business/gateway)
+fairyclaw start
 ```
 
-For detailed steps — Docker, systemd, Web UI, OneBot/NapCat integration — see [DEPLOY.md](DEPLOY.md).
+`fairyclaw start` defaults:
+- business: `0.0.0.0:16000`
+- gateway/web: `0.0.0.0:8081` (`/app`)
+- runtime home: `~/.fairyclaw` (override with `FAIRYCLAW_RUNTIME_HOME`)
+- if those ports are still held by a previous uvicorn, stale listeners are stopped automatically (`lsof`/`fuser`); use `--no-kill-stale` to disable
+
+If `config/fairyclaw.env` or `config/llm_endpoints.yaml` is missing, startup bootstraps from corresponding `*.example` files. It then syncs repo `config/` into runtime config.
+
+If needed, also set `FAIRYCLAW_API_TOKEN` before startup to override the default placeholder token used by the web gateway auth.
+
+For detailed steps — Docker, systemd, Web UI, OneBot/NapCat integration — see [DEPLOY.md](DEPLOY.md). For packaging wheels with embedded frontend assets, run `python scripts/prepare_web_dist.py` before `python -m build`.
 
 ---
 

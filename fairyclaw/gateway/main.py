@@ -16,6 +16,7 @@ from fairyclaw.gateway.adapters.onebot_adapter import OneBotGatewayAdapter
 from fairyclaw.gateway.runtime import GatewayRuntime
 from fairyclaw.infrastructure.database.models import Base
 from fairyclaw.infrastructure.database.session import engine
+from fairyclaw.paths import resolve_web_dist_dir
 
 app = FastAPI(title="FairyClaw Gateway", version="0.1.0")
 app.add_middleware(
@@ -29,8 +30,8 @@ app.add_middleware(
 runtime = GatewayRuntime(adapters=[WebGatewayAdapter(), OneBotGatewayAdapter()])
 app.include_router(runtime.build_router())
 
-WEB_DIST_DIR = Path(__file__).resolve().parents[2] / "web" / "dist"
-HAS_WEB_APP = WEB_DIST_DIR.exists()
+WEB_DIST_DIR = resolve_web_dist_dir()
+HAS_WEB_APP = (WEB_DIST_DIR / "index.html").exists()
 
 
 def _web_file(path: str = "") -> Path:
