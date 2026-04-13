@@ -60,7 +60,9 @@ Key characteristics:
   - Sub-agent registry, terminal state checking, aggregated result construction.
   - Batch number management: retains full history while aggregating only the current batch.
 - `fairyclaw/core/capabilities/registry.py`
-  - Dynamically loads capability groups; supports `.resolve()` on script paths (enables cross-group script reuse).
+  - Dynamically loads capability groups from **`FAIRYCLAW_CAPABILITIES_DIR`** (materialized from the package seed on cold start; monorepos often point this at `fairyclaw/capabilities/`).
+  - Loads each group’s `config.py` as **`fairyclaw_plugins.<group>.config`** so tool scripts import config models from `fairyclaw_plugins.*`, not `fairyclaw.capabilities.*`.
+  - Supports `.resolve()` on script paths (enables cross-group script reuse).
   - Handles Hook registration, enabled-group resolution, manifest `event_types` parsing, and per-stage hook retrieval.
 - `fairyclaw/core/agent/hooks/protocol.py`
   - Defines the Hook I/O protocol: `HookExecutionContext`, `HookStageInput/Output`.

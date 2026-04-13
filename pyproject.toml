@@ -4,8 +4,38 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fairyclaw"
-version = "0.1.6"
+version = "0.1.21"
 description = "FairyClaw server-side agent runtime"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+  { name = "Zhang Xi", email = "3478936082@qq.com" },
+  { name = "Ding Siyi", email = "2500012926@stu.pku.edu.cn" },
+]
+maintainers = [
+  { name = "Zhang Xi", email = "3478936082@qq.com" },
+]
+keywords = [
+  "agent",
+  "llm",
+  "async",
+  "fastapi",
+  "fairyclaw",
+  "automation",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Framework :: FastAPI",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
 requires-python = ">=3.10"
 dependencies = [
   "fastapi>=0.115.0",
@@ -34,11 +64,21 @@ embedding-local = ["sentence-transformers>=3.0.1"]
 [project.scripts]
 fairyclaw = "fairyclaw.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/PKULab1806/FairyClaw"
+Repository = "https://github.com/PKULab1806/FairyClaw"
+Documentation = "https://github.com/PKULab1806/FairyClaw#readme"
+
+# List only ["fairyclaw"] omits subpackages (fairyclaw.config, fairyclaw.core, …) from the wheel.
 [tool.setuptools]
-packages = ["fairyclaw"]
+license-files = ["LICENSE"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["fairyclaw*"]
 
 [tool.setuptools.package-data]
-fairyclaw = ["web_dist/**", "config_templates/**"]
+fairyclaw = ["web_dist/**", "config_templates/**", "capabilities/**"]
 
 [tool.uvicorn]
 factory = false

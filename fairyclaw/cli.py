@@ -13,7 +13,15 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import TextIO
 
+from fairyclaw.capabilities_seed import sync_capabilities, upgrade_capabilities
+from fairyclaw.config.env_normalize import normalize_fairyclaw_env_file
+from fairyclaw.config.locations import (
+    capabilities_dir_from_env_values,
+    resolve_config_dir,
+    resolve_capabilities_seed_dir,
+)
 from fairyclaw.paths import package_dir
 
 PROXY_ENV_KEYS = (
@@ -232,18 +240,6 @@ def _parse_env_file(path: Path) -> dict[str, str]:
     return values
 
 
-def _resolve_project_config_dir() -> Path:
-    """Directory .../config: prefer ./config, else package-root config, else create ./config."""
-    cwd_cfg = (Path.cwd() / "config").resolve()
-    if cwd_cfg.is_dir():
-        return cwd_cfg
-    pkg_cfg = (package_dir().parent / "config").resolve()
-    if pkg_cfg.is_dir():
-        return pkg_cfg
-    cwd_cfg.mkdir(parents=True, exist_ok=True)
-    return cwd_cfg
-
-
 def _bundled_config_template(name: str) -> Path | None:
     """Shipped copies of repo `config/*.example` for wheel installs / unknown cwd."""
     p = package_dir() / "config_templates" / name
@@ -300,8 +296,8 @@ def _ensure_repo_config_from_examples(repo_config_dir: Path) -> None:
 
 
 def _prepare_project_config(no_sync_config: bool) -> tuple[Path, Path, dict[str, str]]:
-    """Seed config/*.example -> real files under project config/, then parse fairyclaw.env."""
-    config_dir = _resolve_project_config_dir()
+    """Seed config/*.example -> real files under project config/, normalize paths (G8), sync capabilities."""
+    config_dir = resolve_config_dir(mkdir=True)
     project_root = config_dir.parent
 
     if not no_sync_config:
@@ -321,6 +317,22 @@ def _prepare_project_config(no_sync_config: bool) -> tuple[Path, Path, dict[str,
                     "Missing LLM endpoints config and bundled template; reinstall fairyclaw or "
                     "add config/llm_endpoints.yaml.example."
                 )
+
+        anchor = project_root.resolve()
+        normalize_fairyclaw_env_file(env_f, anchor)
+        vals = _parse_env_file(env_f)
+        cap_dest = capabilities_dir_from_env_values(anchor, vals)
+        seed = resolve_capabilities_seed_dir()
+        added, skipped = sync_capabilities(seed_root=seed, dest_root=cap_dest)
+        if added:
+            print(f"Materialized capability groups: {', '.join(added)}", flush=True)
+        if skipped:
+            print(
+                "Skipped capability groups (differ from package seed; use "
+                "`fairyclaw capabilities upgrade` to overwrite): "
+                + ", ".join(skipped),
+                flush=True,
+            )
 
     values = _parse_env_file(config_dir / "fairyclaw.env")
     return project_root, config_dir, values
@@ -345,58 +357,76 @@ def _build_frontend(web_dir: Path, token: str, vite_gateway_base_url: str | None
         build_env["VITE_GATEWAY_BASE_URL"] = ""
     else:
         build_env["VITE_GATEWAY_BASE_URL"] = vite_gateway_base_url
-    subprocess.run(["npm", "ci"], cwd=web_dir, env=build_env, check=True)
-    subprocess.run(["npm", "run", "build"], cwd=web_dir, env=build_env, check=True)
+    subprocess.run(
+        ["npm", "ci", "--no-progress", "--silent"],
+        cwd=web_dir,
+        env=build_env,
+        check=True,
+    )
+    subprocess.run(
+        ["npm", "run", "build", "--silent", "--", "--logLevel", "warn"],
+        cwd=web_dir,
+        env=build_env,
+        check=True,
+    )
 
 
-def _wait_for_business_ready(
+def _wait_for_healthz(
     proc: subprocess.Popen,
     health_url: str,
     *,
     timeout_seconds: float,
-    log_interval_seconds: float = 5.0,
+    status_prefix: str,
+    process_log: Path | None = None,
 ) -> None:
-    """Block until /healthz responds or the process exits / timeout."""
+    """Block until GET health_url returns 200 or process exits / timeout. One-line TTY progress."""
     import urllib.error
     import urllib.request
 
     opener = _http_opener_no_proxy()
-    deadline = time.time() + timeout_seconds
-    next_log = time.time()
+    start = time.time()
+    deadline = start + timeout_seconds
     interval = 0.35
+    tty = sys.stdout.isatty()
+    if not tty:
+        print(f"{status_prefix} (timeout {timeout_seconds:.0f}s) ...", flush=True)
     while time.time() < deadline:
         rc = proc.poll()
         if rc is not None:
+            hint = f" See {process_log} for details." if process_log else ""
             raise RuntimeError(
-                f"Business process exited before /healthz became ready (exit code {rc}). "
-                "Check FAIRYCLAW_* env, port conflicts, and try: "
-                f"python -m uvicorn fairyclaw.main:app --host 0.0.0.0 --port <port>"
+                f"Process exited before {health_url} became ready (exit code {rc}).{hint} "
+                "Check FAIRYCLAW_* env and port conflicts, or run uvicorn manually."
             )
         try:
             req = urllib.request.Request(health_url, method="GET")
             with opener.open(req, timeout=2.0) as res:
                 if res.status == 200:
+                    if tty:
+                        sys.stdout.write("\r\033[K")
+                        sys.stdout.flush()
                     return
         except (urllib.error.URLError, OSError, TimeoutError):
             pass
-        if time.time() >= next_log:
-            remaining = max(0.0, deadline - time.time())
-            print(
-                f"Waiting for business API {health_url} ({remaining:.0f}s left) ...",
-                flush=True,
-            )
-            next_log = time.time() + log_interval_seconds
+        elapsed = time.time() - start
+        if tty:
+            sys.stdout.write(f"\r\033[K{status_prefix} · {elapsed:.0f}s")
+            sys.stdout.flush()
         time.sleep(interval)
         interval = min(interval * 1.12, 2.0)
 
+    if tty:
+        sys.stdout.write("\r\033[K")
+        sys.stdout.flush()
+    hint = f" See {process_log}." if process_log else ""
     raise RuntimeError(
-        f"Timed out after {timeout_seconds:.0f}s waiting for {health_url}. "
-        "The backend may still be importing or the port may be in use; "
-        "try --health-wait-seconds 300 or run uvicorn manually to see errors."
+        f"Timed out after {timeout_seconds:.0f}s waiting for {health_url}.{hint} "
+        "Try --health-wait-seconds 300 or run uvicorn manually."
     )
 
 
-def _wsl_ip() -> str | None:
+def _linux_primary_ipv4_hint() -> str | None:
+    """Best-effort non-loopback IPv4 (Linux `hostname -I`); None if unavailable."""
     try:
         out = subprocess.check_output(["hostname", "-I"], text=True).strip().split()
         if out:
@@ -406,6 +436,36 @@ def _wsl_ip() -> str | None:
     return None
 
 
+def _uvicorn_common_args() -> list[str]:
+    return ["--log-level", "warning", "--no-access-log", "--no-use-colors"]
+
+
+def _print_ready_banner(
+    *,
+    gateway_host: str,
+    gateway_port: int,
+    business_port: int,
+    biz_log: Path,
+    gw_log: Path,
+    app_log: Path | None,
+) -> None:
+    print("", flush=True)
+    print("FairyClaw is ready.", flush=True)
+    print(f"  Web UI (this machine):     http://127.0.0.1:{gateway_port}/app", flush=True)
+    lan = _linux_primary_ipv4_hint()
+    if lan and lan != "127.0.0.1":
+        print(f"  Web UI (LAN example):      http://{lan}:{gateway_port}/app", flush=True)
+    print(f"  Gateway bind address:      {gateway_host}:{gateway_port}", flush=True)
+    print(f"  Business (internal):       http://127.0.0.1:{business_port}  (bridge / healthz only)", flush=True)
+    print("  Uvicorn stdout/stderr:", flush=True)
+    print(f"    {biz_log}", flush=True)
+    print(f"    {gw_log}", flush=True)
+    if app_log is not None:
+        print(f"  Application log file:      {app_log}", flush=True)
+    print("", flush=True)
+    print("Press Ctrl+C to stop both processes.", flush=True)
+
+
 def _launch_dual_processes(
     env: dict[str, str],
     business_host: str,
@@ -413,6 +473,8 @@ def _launch_dual_processes(
     gateway_host: str,
     gateway_port: int,
     *,
+    logs_dir: Path,
+    app_log_path: Path | None,
     health_wait_seconds: float,
     skip_health_check: bool,
     cwd: Path | None,
@@ -421,11 +483,17 @@ def _launch_dual_processes(
     popen_kw: dict[str, object] = {}
     if cwd is not None:
         popen_kw["cwd"] = str(cwd)
+
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    biz_log_path = logs_dir / "uvicorn-business.log"
+    gw_log_path = logs_dir / "uvicorn-gateway.log"
+    uv_extra = _uvicorn_common_args()
     biz_cmd = [
         sys.executable,
         "-m",
         "uvicorn",
         "fairyclaw.main:app",
+        *uv_extra,
         "--host",
         business_host,
         "--port",
@@ -436,41 +504,118 @@ def _launch_dual_processes(
         "-m",
         "uvicorn",
         "fairyclaw.gateway.main:app",
+        *uv_extra,
         "--host",
         gateway_host,
         "--port",
         str(gateway_port),
     ]
 
-    biz = subprocess.Popen(biz_cmd, env=env, preexec_fn=preexec, **popen_kw)
-    _TRACKED_CHILDREN.append(biz)
+    print("Starting business server ...", flush=True)
+    biz_log_f = open(biz_log_path, "a", encoding="utf-8", buffering=1)
+    gw_log_f: TextIO | None = None
+    biz: subprocess.Popen | None = None
+    gw: subprocess.Popen | None = None
     try:
-        health_url = f"http://127.0.0.1:{business_port}/healthz"
+        try:
+            biz = subprocess.Popen(
+                biz_cmd,
+                env=env,
+                preexec_fn=preexec,
+                stdout=biz_log_f,
+                stderr=subprocess.STDOUT,
+                **popen_kw,
+            )
+        except Exception:
+            biz_log_f.close()
+            raise
+        assert biz is not None
+        _TRACKED_CHILDREN.append(biz)
+
+        business_health = f"http://127.0.0.1:{business_port}/healthz"
+        gateway_health = f"http://127.0.0.1:{gateway_port}/healthz"
         if skip_health_check:
-            print("Skipping /healthz wait; giving business process a few seconds to bind ...", flush=True)
+            print("Skipping business /healthz; 5s grace period ...", flush=True)
             time.sleep(5.0)
             if biz.poll() is not None:
                 raise RuntimeError(
-                    f"Business process exited during startup grace period (exit code {biz.poll()})."
+                    f"Business process exited during startup grace period (exit code {biz.poll()}). "
+                    f"See {biz_log_path}."
                 )
         else:
-            _wait_for_business_ready(biz, health_url, timeout_seconds=health_wait_seconds)
-        gw = subprocess.Popen(gw_cmd, env=env, preexec_fn=preexec, **popen_kw)
-        _TRACKED_CHILDREN.append(gw)
-    except Exception:
-        if biz.poll() is None:
-            _terminate_process(biz)
+            _wait_for_healthz(
+                biz,
+                business_health,
+                timeout_seconds=health_wait_seconds,
+                status_prefix="  Business /healthz",
+                process_log=biz_log_path,
+            )
+            print("  Business /healthz OK", flush=True)
+
+        print("Starting gateway server ...", flush=True)
+        gw_log_f = open(gw_log_path, "a", encoding="utf-8", buffering=1)
         try:
-            _TRACKED_CHILDREN.remove(biz)
-        except ValueError:
-            pass
+            gw = subprocess.Popen(
+                gw_cmd,
+                env=env,
+                preexec_fn=preexec,
+                stdout=gw_log_f,
+                stderr=subprocess.STDOUT,
+                **popen_kw,
+            )
+        except Exception:
+            gw_log_f.close()
+            gw_log_f = None
+            raise
+        _TRACKED_CHILDREN.append(gw)
+
+        if skip_health_check:
+            print("Skipping gateway /healthz; 3s grace period ...", flush=True)
+            time.sleep(3.0)
+            if gw.poll() is not None:
+                raise RuntimeError(
+                    f"Gateway process exited during startup grace period (exit code {gw.poll()}). "
+                    f"See {gw_log_path}."
+                )
+        else:
+            _wait_for_healthz(
+                gw,
+                gateway_health,
+                timeout_seconds=min(health_wait_seconds, 60.0),
+                status_prefix="  Gateway /healthz",
+                process_log=gw_log_path,
+            )
+            print("  Gateway /healthz OK", flush=True)
+    except Exception:
+        if gw is not None and gw.poll() is None:
+            _terminate_process(gw)
+        if biz is not None and biz.poll() is None:
+            _terminate_process(biz)
+        for p in (biz, gw):
+            if p is None:
+                continue
+            try:
+                _TRACKED_CHILDREN.remove(p)
+            except ValueError:
+                pass
+        biz_log_f.close()
+        if gw_log_f is not None:
+            gw_log_f.close()
         raise
 
-    print(f"Gateway UI: http://127.0.0.1:{gateway_port}/app")
-    ip = _wsl_ip()
-    if ip:
-        print(f"WSL host access: http://{ip}:{gateway_port}/app")
-    print("Press Ctrl+C to stop both processes.")
+    assert biz is not None and gw is not None
+    biz_log_f.close()
+    assert gw_log_f is not None
+    gw_log_f.close()
+
+    _print_ready_banner(
+        gateway_host=gateway_host,
+        gateway_port=gateway_port,
+        business_port=business_port,
+        biz_log=biz_log_path,
+        gw_log=gw_log_path,
+        app_log=app_log_path,
+    )
 
     children = [biz, gw]
 
@@ -488,10 +633,20 @@ def _launch_dual_processes(
             biz_rc = biz.poll()
             gw_rc = gw.poll()
             if biz_rc is not None:
+                print(
+                    f"\nBusiness process exited (code {biz_rc}); stopping Gateway.\n"
+                    f"  Log: {biz_log_path}",
+                    flush=True,
+                )
                 if gw.poll() is None:
                     _terminate_process(gw)
                 return biz_rc
             if gw_rc is not None:
+                print(
+                    f"\nGateway process exited (code {gw_rc}); stopping Business.\n"
+                    f"  Log: {gw_log_path}",
+                    flush=True,
+                )
                 if biz.poll() is None:
                     _terminate_process(biz)
                 return gw_rc
@@ -534,6 +689,7 @@ def _start(args: argparse.Namespace) -> int:
     if not args.skip_build and (web_dir is not None or args.force_build):
         if web_dir is None:
             raise RuntimeError("Cannot force web build: missing web/package.json")
+        print("Building web UI ...", flush=True)
         _build_frontend(web_dir, token=token, vite_gateway_base_url=args.vite_gateway_base_url)
 
     env = os.environ.copy()
@@ -559,6 +715,9 @@ def _start(args: argparse.Namespace) -> int:
     if "FAIRYCLAW_LOG_FILE_PATH" not in os.environ:
         env["FAIRYCLAW_LOG_FILE_PATH"] = str(data_resolved / "logs" / "fairyclaw.log")
 
+    cap_dest = capabilities_dir_from_env_values(project_root.resolve(), config_values)
+    env["FAIRYCLAW_CAPABILITIES_DIR"] = str(cap_dest)
+
     business_port = args.business_port
     env["FAIRYCLAW_HOST"] = "0.0.0.0"
     env["FAIRYCLAW_PORT"] = str(business_port)
@@ -579,10 +738,63 @@ def _start(args: argparse.Namespace) -> int:
         business_port=business_port,
         gateway_host=env["FAIRYCLAW_GATEWAY_HOST"],
         gateway_port=gateway_port,
+        logs_dir=data_resolved / "logs",
+        app_log_path=Path(env["FAIRYCLAW_LOG_FILE_PATH"]),
         health_wait_seconds=float(args.health_wait_seconds),
         skip_health_check=bool(args.skip_health_check),
         cwd=project_root,
     )
+
+
+def _cmd_capabilities_sync(args: argparse.Namespace) -> int:
+    if args.no_seed_config:
+        config_dir = resolve_config_dir(mkdir=False)
+        env_f = config_dir / "fairyclaw.env"
+        if not env_f.is_file():
+            print(
+                "No fairyclaw.env found; run `fairyclaw start` once or omit --no-seed-config.",
+                flush=True,
+            )
+            return 1
+        anchor = config_dir.parent.resolve()
+        normalize_fairyclaw_env_file(env_f, anchor)
+        vals = _parse_env_file(env_f)
+        cap_dest = capabilities_dir_from_env_values(anchor, vals)
+        added, skipped = sync_capabilities(seed_root=resolve_capabilities_seed_dir(), dest_root=cap_dest)
+        if added:
+            print(f"Materialized capability groups: {', '.join(added)}", flush=True)
+        if skipped:
+            print(
+                "Skipped (differ from seed): " + ", ".join(skipped),
+                flush=True,
+            )
+        return 0
+    _prepare_project_config(no_sync_config=False)
+    return 0
+
+
+def _cmd_capabilities_upgrade(args: argparse.Namespace) -> int:
+    config_dir = resolve_config_dir(mkdir=False)
+    env_f = config_dir / "fairyclaw.env"
+    if not env_f.is_file():
+        print("No fairyclaw.env found; run `fairyclaw start` once.", flush=True)
+        return 1
+    anchor = config_dir.parent.resolve()
+    normalize_fairyclaw_env_file(env_f, anchor)
+    vals = _parse_env_file(env_f)
+    cap_dest = capabilities_dir_from_env_values(anchor, vals)
+    names = upgrade_capabilities(
+        seed_root=resolve_capabilities_seed_dir(),
+        dest_root=cap_dest,
+        group=args.group,
+        backup=not args.no_backup,
+        dry_run=args.dry_run,
+    )
+    if args.dry_run:
+        print("Would upgrade: " + (", ".join(names) if names else "(none)"), flush=True)
+    else:
+        print("Upgraded: " + (", ".join(names) if names else "(none)"), flush=True)
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -624,6 +836,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Do not stop listeners; fail if ports are busy",
     )
     start.set_defaults(kill_stale=True)
+
+    cap = sub.add_parser("capabilities", help="Materialize or upgrade capability groups from package seed")
+    cap_sub = cap.add_subparsers(dest="cap_command", required=True)
+    cap_sync = cap_sub.add_parser("sync", help="Copy missing groups from seed; skip groups that differ from seed")
+    cap_sync.add_argument(
+        "--no-seed-config",
+        action="store_true",
+        help="Do not seed config/ from examples (requires existing fairyclaw.env)",
+    )
+    cap_up = cap_sub.add_parser(
+        "upgrade",
+        help="Overwrite capability group(s) from package seed (default: backup replaced tree)",
+    )
+    cap_up.add_argument("--group", default=None, help="Upgrade only this group directory name")
+    cap_up.add_argument("--dry-run", action="store_true", help="Print groups that would be upgraded")
+    cap_up.add_argument(
+        "--no-backup",
+        action="store_true",
+        help="Do not keep .bak.<timestamp> backup of replaced groups",
+    )
     return parser
 
 
@@ -632,6 +864,11 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "start":
         return _start(args)
+    if args.command == "capabilities":
+        if args.cap_command == "sync":
+            return _cmd_capabilities_sync(args)
+        if args.cap_command == "upgrade":
+            return _cmd_capabilities_upgrade(args)
     parser.print_help()
     return 2
 

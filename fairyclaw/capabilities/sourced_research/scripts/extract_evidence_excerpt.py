@@ -8,7 +8,7 @@ import httpx
 
 from fairyclaw.sdk.group_runtime import expect_group_config
 from fairyclaw.sdk.tools import ToolContext
-from fairyclaw.capabilities.sourced_research.config import SourcedResearchRuntimeConfig
+from fairyclaw_plugins.sourced_research.config import SourcedResearchRuntimeConfig
 from fairyclaw.infrastructure.web.page_text import fetch_page_text
 
 

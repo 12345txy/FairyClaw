@@ -11,7 +11,7 @@ from typing import Any
 from fairyclaw.config import settings
 from fairyclaw.core.domain import EventType
 from fairyclaw.config.loader import merge_whitelisted_env, read_env_file
-from fairyclaw.config.settings import PROJECT_ROOT
+from fairyclaw.config.locations import resolve_fairyclaw_env_path
 from fairyclaw.core.gateway_protocol.control_envelope import (
     SYSTEM_ENV_WHITELIST,
     CapabilityGroupPolicy,
@@ -24,8 +24,6 @@ from fairyclaw.infrastructure.llm.config import apply_llm_document, get_llm_docu
 from fairyclaw.core.events.runtime import get_user_gateway
 
 logger = logging.getLogger(__name__)
-
-FAIRYCLAW_ENV_PATH = PROJECT_ROOT / "config" / "fairyclaw.env"
 
 _HISTORY_LIMIT_CAP = 500
 
@@ -135,7 +133,7 @@ class BusinessGatewayControl:
             self._planner.reload_llm_client()
             return {"ok": True}
         if op == "config.system_env.get":
-            env = read_env_file(FAIRYCLAW_ENV_PATH)
+            env = read_env_file(resolve_fairyclaw_env_path())
             filtered = {k: v for k, v in env.items() if k in SYSTEM_ENV_WHITELIST}
             return {"env": filtered}
         if op == "config.system_env.put":
@@ -146,7 +144,7 @@ class BusinessGatewayControl:
             if "FAIRYCLAW_API_TOKEN" in str_map:
                 raise ValueError("FAIRYCLAW_API_TOKEN cannot be changed via control plane")
             validated = validate_system_env_slice(str_map)
-            merge_whitelisted_env(FAIRYCLAW_ENV_PATH, validated, whitelist=SYSTEM_ENV_WHITELIST)
+            merge_whitelisted_env(resolve_fairyclaw_env_path(), validated, whitelist=SYSTEM_ENV_WHITELIST)
             _apply_env_to_settings(validated)
             return {"ok": True}
         if op == "capabilities.list":

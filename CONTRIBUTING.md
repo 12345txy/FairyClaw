@@ -102,7 +102,7 @@ Direct imports like `from fairyclaw.core.capabilities.models import ToolContext`
 
 ### Group runtime configuration
 
-If your group needs runtime parameters (timeouts, proxy URLs, model names, etc.), define a frozen Pydantic model in `config.py` and expose it as `runtime_config_model`.  The registry loads it once at startup and injects it into `ToolContext.group_runtime_config`.
+If your group needs runtime parameters (timeouts, proxy URLs, model names, etc.), define a frozen Pydantic model in `config.py` and expose it as `runtime_config_model`.  The registry loads it once at startup under the synthetic module name **`fairyclaw_plugins.<group_dir>.config`** (file still lives at `fairyclaw/capabilities/<group>/config.py` in the repo) and injects the snapshot into `ToolContext.group_runtime_config`.
 
 ```python
 # fairyclaw/capabilities/my_group/config.py
@@ -120,7 +120,7 @@ In scripts, retrieve the snapshot with `expect_group_config`:
 
 ```python
 from fairyclaw.sdk.group_runtime import expect_group_config
-from fairyclaw.capabilities.my_group.config import MyGroupRuntimeConfig
+from fairyclaw_plugins.my_group.config import MyGroupRuntimeConfig
 
 async def execute(args, context: ToolContext) -> str:
     cfg = expect_group_config(context, MyGroupRuntimeConfig)

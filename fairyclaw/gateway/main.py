@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 
 from fairyclaw.config.settings import settings
 from fairyclaw.gateway.adapters.web_gateway_adapter import WebGatewayAdapter
@@ -16,6 +17,7 @@ from fairyclaw.gateway.adapters.onebot_adapter import OneBotGatewayAdapter
 from fairyclaw.gateway.runtime import GatewayRuntime
 from fairyclaw.infrastructure.database.models import Base
 from fairyclaw.infrastructure.database.session import engine
+from fairyclaw.infrastructure.logging_setup import setup_logging
 from fairyclaw.paths import resolve_web_dist_dir
 
 app = FastAPI(title="FairyClaw Gateway", version="0.1.0")
@@ -50,6 +52,15 @@ if HAS_WEB_APP:
     async def web_app_index() -> FileResponse:
         return FileResponse(WEB_DIST_DIR / "index.html", headers={"Cache-Control": "no-store"})
 
+    @app.get("/app/fc-bootstrap.js", include_in_schema=False)
+    async def web_app_fc_bootstrap_js() -> Response:
+        """Inject FAIRYCLAW_API_TOKEN so pip-installed UI matches runtime env without rebuilding web."""
+        body = f"window.__FAIRYCLAW_API_TOKEN__={json.dumps(settings.api_token)};\n"
+        return Response(
+            content=body,
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/app/{path:path}", include_in_schema=False)
     async def web_app_path(path: str) -> FileResponse:
@@ -67,6 +78,8 @@ if HAS_WEB_APP:
 
 @app.on_event("startup")
 async def startup() -> None:
+    settings.ensure_dirs()
+    setup_logging()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await runtime.start()

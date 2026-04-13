@@ -10,7 +10,7 @@ This document maps each directory to its responsibility and key files.
 |---|---|
 | `main.py` | Process entry point. Calls `uvicorn.run("fairyclaw.main:app", ...)`. |
 | `fairyclaw/` | The Python package — all runtime code. |
-| `config/` | Configuration files: `fairyclaw.env` (gitignored), `fairyclaw.env.example`, `llm_endpoints.yaml` (gitignored), `llm_endpoints.yaml.example`. |
+| `config/` | Configuration files: `fairyclaw.env` (gitignored), `fairyclaw.env.example`, `llm_endpoints.yaml` (gitignored), `llm_endpoints.yaml.example`. At runtime this directory may be `./config` in a checkout or **`~/.fairyclaw/config`** (or **`$FAIRYCLAW_HOME/config`**) when using `pip install` without a local `./config`. |
 | `tests/` | pytest test suite. |
 | `scripts/` | One-off developer scripts (not production). |
 | `web/` | React/TypeScript SPA served by the Gateway at `/app`. |
@@ -152,6 +152,8 @@ Bridge-protocol models shared between Business and Gateway.
 ---
 
 ## `fairyclaw/capabilities/`
+
+Shipped **seed** tree (also copied to **`FAIRYCLAW_CAPABILITIES_DIR`** on cold start). In a monorepo checkout, set `FAIRYCLAW_CAPABILITIES_DIR=./fairyclaw/capabilities` in `config/fairyclaw.env`; bundled pip defaults use `./capabilities` beside `config/`. Tool scripts load `config.py` via the **`fairyclaw_plugins.<group>.config`** module name.
 
 Pluggable capability groups. Each subdirectory is a group:
 

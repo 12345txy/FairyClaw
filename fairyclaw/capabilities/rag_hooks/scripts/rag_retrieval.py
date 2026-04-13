@@ -13,7 +13,7 @@ from fairyclaw.core.agent.constants import SUB_SESSION_MARKER
 from fairyclaw.core.agent.hooks.protocol import BeforeLlmCallHookPayload, HookStageInput, HookStageOutput, HookStatus, LlmChatMessage
 from fairyclaw.infrastructure.embedding.service import create_embedding_service, load_embedding_profile
 from fairyclaw.infrastructure.tokenizer.counter import TokenCounter
-from fairyclaw.capabilities.rag_hooks.scripts._vectorstore import LocalVectorStore
+from ._vectorstore import LocalVectorStore
 
 logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"

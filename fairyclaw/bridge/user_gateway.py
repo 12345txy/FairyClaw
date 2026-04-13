@@ -131,6 +131,13 @@ class UserGateway:
         self._processed_inbound = _RecentFrameSet()
         self._acked_outbound: set[str] = set()
         self._outbound_backlog: deque[BridgeFrame] = deque(maxlen=settings.bridge_outbound_backlog_size)
+        # Starlette WebSocket send is not safe concurrently with other sends; telemetry / outbound
+        # share the bridge with the receive loop.
+        self._bridge_send_lock = asyncio.Lock()
+
+    async def _bridge_send_text(self, websocket: WebSocket, text: str) -> None:
+        async with self._bridge_send_lock:
+            await websocket.send_text(text)
 
     async def _enrich_outbound_with_route(self, message: GatewayOutboundMessage) -> GatewayOutboundMessage:
         """Attach adapter_key/sender_ref from DB when missing so a split gateway can still dispatch."""
@@ -159,7 +166,7 @@ class UserGateway:
             self._outbound_backlog.append(frame)
             websocket = self._active_websocket
         if websocket is not None:
-            await websocket.send_text(frame.to_json())
+            await self._bridge_send_text(websocket, frame.to_json())
 
     async def emit_file(self, session_id: str, file_id: str) -> None:
         """Deliver one stored file to the user channel.
@@ -309,7 +316,7 @@ class UserGateway:
         return [r.to_dict() for r in rows]
 
     async def _send_frame(self, websocket: WebSocket, frame: BridgeFrame) -> None:
-        await websocket.send_text(frame.to_json())
+        await self._bridge_send_text(websocket, frame.to_json())
 
     async def _send_ack(
         self,
@@ -342,19 +349,48 @@ class UserGateway:
         for frame in frames:
             if frame.id in acked:
                 continue
-            await websocket.send_text(frame.to_json())
+            await self._bridge_send_text(websocket, frame.to_json())
 
     async def handle_connection(self, websocket: WebSocket) -> None:
         """Accept and process one gateway WebSocket connection."""
         await websocket.accept()
+        logger.debug("Gateway bridge WebSocket accepted peer=%s", websocket.client)
+        loop_exit: str | None = None
         try:
             while True:
                 raw = await websocket.receive_text()
-                frame = BridgeFrame.from_json(raw)
-                await self._handle_frame(websocket, frame)
-        except WebSocketDisconnect:
-            logger.info("Gateway bridge disconnected")
+                try:
+                    frame = BridgeFrame.from_json(raw)
+                except Exception as exc:
+                    logger.warning("Gateway bridge: dropped non-JSON or invalid frame: %s", exc)
+                    continue
+                try:
+                    await self._handle_frame(websocket, frame)
+                except WebSocketDisconnect:
+                    raise
+                except Exception:
+                    logger.exception("Gateway bridge: frame handler failed; closing connection")
+                    loop_exit = "handler_error"
+                    break
+        except WebSocketDisconnect as exc:
+            code = getattr(exc, "code", None)
+            reason = getattr(exc, "reason", "") or ""
+            logger.debug(
+                "Gateway bridge disconnected (WebSocketDisconnect) code=%s reason=%r",
+                code,
+                reason,
+            )
+        else:
+            if loop_exit == "handler_error":
+                logger.warning(
+                    "Gateway bridge: message loop exited after a frame handler error "
+                    "(see exception above)."
+                )
         finally:
+            if loop_exit == "handler_error":
+                logger.warning(
+                    "Gateway bridge connection ending after handler error (see exception above)"
+                )
             async with self._state_lock:
                 if self._active_websocket is websocket:
                     self._active_websocket = None
@@ -367,6 +403,10 @@ class UserGateway:
             payload = frame.payload
             token = payload.get("token")
             if token != settings.bridge_token:
+                logger.warning(
+                    "Gateway bridge HELLO rejected: invalid bridge token (check FAIRYCLAW_BRIDGE_TOKEN "
+                    "matches on Business and Gateway)"
+                )
                 await self._send_frame(
                     websocket,
                     BridgeFrame(
@@ -400,6 +440,11 @@ class UserGateway:
                         },
                     ).to_dict(),
                 ),
+            )
+            logger.debug(
+                "Gateway bridge handshake ok gateway_id=%s connection_id=%s",
+                gateway_id or "(empty)",
+                connection_id,
             )
             return
 

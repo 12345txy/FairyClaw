@@ -8,7 +8,7 @@ import logging
 import re
 from pathlib import Path
 
-from fairyclaw.capabilities.memory_hooks.scripts._vectorstore import LocalVectorStore
+from ._vectorstore import LocalVectorStore
 from fairyclaw.config.loader import load_yaml
 from fairyclaw.core.agent.context.history_ir import SessionMessageBlock
 from fairyclaw.core.agent.hooks.protocol import AfterLlmResponseHookPayload, HookStageInput, HookStageOutput, HookStatus

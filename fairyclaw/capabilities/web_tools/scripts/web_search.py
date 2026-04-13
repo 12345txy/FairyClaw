@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 from fairyclaw.sdk.group_runtime import expect_group_config
 from fairyclaw.sdk.tools import ToolContext
-from fairyclaw.capabilities.web_tools.config import WebToolsRuntimeConfig
+from fairyclaw_plugins.web_tools.config import WebToolsRuntimeConfig
 from fairyclaw.infrastructure.web.ddgs_client import ddgs_search
 
 

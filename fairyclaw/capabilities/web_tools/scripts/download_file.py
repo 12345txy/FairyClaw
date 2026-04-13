@@ -11,7 +11,7 @@ import httpx
 
 from fairyclaw.sdk.group_runtime import expect_group_config
 from fairyclaw.sdk.tools import ToolContext, resolve_safe_path
-from fairyclaw.capabilities.web_tools.config import WebToolsRuntimeConfig
+from fairyclaw_plugins.web_tools.config import WebToolsRuntimeConfig
 BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "

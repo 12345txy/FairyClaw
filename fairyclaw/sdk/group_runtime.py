@@ -18,7 +18,7 @@ Usage in a group-config model file::
 Usage in a capability script::
 
     from fairyclaw.sdk.group_runtime import expect_group_config
-    from my_group.config import WebToolsRuntimeConfig
+    from fairyclaw_plugins.web_tools.config import WebToolsRuntimeConfig
 
     async def execute(args, ctx):
         cfg = expect_group_config(ctx, WebToolsRuntimeConfig)
@@ -29,7 +29,7 @@ Usage in the registry / startup (called once per group)::
     from fairyclaw.sdk.group_runtime import load_group_runtime_config
     config = load_group_runtime_config(
         group_name="web_tools",
-        group_dir=Path("fairyclaw/capabilities/web_tools"),
+        group_dir=Path("/path/to/capabilities/web_tools"),
         model=WebToolsRuntimeConfig,
         core_settings=settings,
     )

@@ -423,6 +423,9 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
     }
   }, [stopWaitingAssistant])
 
+  const handlePushRef = useRef(handlePush)
+  handlePushRef.current = handlePush
+
   useEffect(() => {
     return () => {
       for (const timer of waitingTimeoutRef.current.values()) {
@@ -485,6 +488,9 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
     setWsState('connecting')
 
     ws.onopen = () => {
+      if (wsRef.current !== ws) {
+        return
+      }
       setWsState('connected')
     }
     ws.onmessage = (event) => {
@@ -515,16 +521,22 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
           return
         }
         if (msg.op === 'push' && msg.body && typeof msg.body === 'object') {
-          handlePush(msg.body as SessionEventMessage)
+          handlePushRef.current(msg.body as SessionEventMessage)
         }
       } catch {
         // ignore
       }
     }
     ws.onerror = () => {
+      if (wsRef.current !== ws) {
+        return
+      }
       setWsState('error')
     }
     ws.onclose = () => {
+      if (wsRef.current !== ws) {
+        return
+      }
       setWsState('closed')
     }
 
@@ -534,7 +546,7 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
         wsRef.current = null
       }
     }
-  }, [gatewayBaseUrl, handlePush])
+  }, [gatewayBaseUrl, hasConfiguredToken])
 
   const sendOp = useCallback((op: string, body: Record<string, unknown>): Promise<WsAckBody> => {
     return new Promise((resolve, reject) => {

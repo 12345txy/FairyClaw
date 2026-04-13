@@ -7,6 +7,7 @@ Initialize web API, database, event bus, session scheduler, and watchdog.
 
 import asyncio
 import logging
+import os
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -53,7 +54,6 @@ async def startup() -> None:
     setup_logging()
     settings.ensure_dirs()
     if settings.filesystem_root_dir:
-        import os
         try:
             os.chdir(settings.filesystem_root_dir)
             print(f"Working directory changed to: {settings.filesystem_root_dir}")
@@ -107,6 +107,7 @@ async def shutdown() -> None:
     Returns:
         None
     """
+    logger.info("FairyClaw Business ASGI shutdown starting")
     scheduler = getattr(app.state, "runtime_scheduler", None)
     if isinstance(scheduler, RuntimeSessionScheduler):
         await scheduler.stop()

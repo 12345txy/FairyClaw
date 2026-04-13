@@ -1,12 +1,13 @@
 /** Fallback when `window` is unavailable (e.g. tests). */
 export const DEFAULT_BASE_URL = import.meta.env.VITE_GATEWAY_BASE_URL || 'http://127.0.0.1:8000'
+/** Build-time fallback; when UI is served under /app, Gateway sets window.__FAIRYCLAW_API_TOKEN__ first. */
 export const DEFAULT_API_TOKEN = import.meta.env.VITE_API_TOKEN || ''
 export const STORAGE_KEY = 'fairyclaw-web-ui-state'
 export const SESSION_HISTORY_LIMIT = 12
 export const APP_TITLE = import.meta.env.VITE_APP_TITLE || 'FairyClaw'
-export const APP_VERSION = import.meta.env.VITE_APP_VERSION || '0.1.7'
+export const APP_VERSION = import.meta.env.VITE_APP_VERSION || '0.1.21'
 
-/** Whitelist subset matching `fairyclaw.env` lines 1–24 (`SYSTEM_ENV_WHITELIST`), excluding API token (server/build only). */
+/** Whitelist subset of `fairyclaw.env` keys editable from Settings (excludes API token). */
 export const SYSTEM_ENV_UI_KEYS: readonly string[] = [
   'FAIRYCLAW_DATABASE_URL',
   'FAIRYCLAW_DATA_DIR',
@@ -24,7 +25,6 @@ export const SYSTEM_ENV_UI_KEYS: readonly string[] = [
   'FAIRYCLAW_ROUTER_PROFILE_NAME',
   'FAIRYCLAW_HOOK_DEFAULT_TIMEOUT_MS',
   'FAIRYCLAW_ENABLE_HOOK_RUNTIME',
-  'FAIRYCLAW_ENABLE_RAG_PIPELINE',
   'FAIRYCLAW_REINS_ENABLED',
   'FAIRYCLAW_REINS_BUDGET_DAILY_USD',
   'FAIRYCLAW_REINS_ON_EXCEED',
@@ -39,20 +39,44 @@ export function gatewayApiBaseUrl(raw: string): string {
   return s || gatewayApiBaseUrl(DEFAULT_BASE_URL)
 }
 
-/** Prefer same-origin (gateway serves UI); optional `VITE_GATEWAY_BASE_URL` override for dev. */
+/**
+ * Gateway HTTP origin for API + WebSocket. If the SPA is mounted under `/app` on this server, it is
+ * by definition same-origin with the gateway — use `window.location.origin` so reverse proxies, LAN IPs,
+ * and containers stay correct even when the build embeds a loopback `VITE_GATEWAY_BASE_URL`. When using
+ * `vite dev` (different origin, path not under `/app`), honor `VITE_GATEWAY_BASE_URL` when set.
+ */
 export function inferGatewayBaseUrl(): string {
+  if (typeof window !== 'undefined') {
+    const origin = window.location.origin
+    const onGatewayApp = window.location.pathname.startsWith('/app')
+    if (onGatewayApp) {
+      return gatewayApiBaseUrl(origin)
+    }
+    const v = import.meta.env.VITE_GATEWAY_BASE_URL
+    if (typeof v === 'string' && v.trim()) {
+      return gatewayApiBaseUrl(v)
+    }
+    return gatewayApiBaseUrl(origin)
+  }
   const v = import.meta.env.VITE_GATEWAY_BASE_URL
   if (typeof v === 'string' && v.trim()) {
     return gatewayApiBaseUrl(v)
   }
-  if (typeof window !== 'undefined') {
-    return gatewayApiBaseUrl(window.location.origin)
-  }
   return gatewayApiBaseUrl(DEFAULT_BASE_URL)
 }
 
-/** Token is internal alignment only — set `VITE_API_TOKEN` at build time to match `FAIRYCLAW_API_TOKEN`. */
+/**
+ * Prefer runtime token from Gateway (`/app/fc-bootstrap.js`) so pip installs match `fairyclaw.env`
+ * without rebuilding the SPA; else build-time `VITE_API_TOKEN`.
+ */
 export function effectiveApiToken(): string {
+  if (typeof window !== 'undefined') {
+    const w = window as unknown as { __FAIRYCLAW_API_TOKEN__?: string }
+    const injected = typeof w.__FAIRYCLAW_API_TOKEN__ === 'string' ? w.__FAIRYCLAW_API_TOKEN__.trim() : ''
+    if (injected) {
+      return injected
+    }
+  }
   return DEFAULT_API_TOKEN.trim()
 }
 

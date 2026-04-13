@@ -341,6 +341,7 @@ class WsBridgeClient:
         await self._send_frame(resume)
         for frame in list(self._pending_inbound_frames.values()):
             await self._send_frame(frame)
+        logger.debug("Bridge client handshake complete; connected to %s", settings.gateway_bridge_url)
 
     async def _send_frame(self, frame: BridgeFrame) -> None:
         async with self._send_lock:

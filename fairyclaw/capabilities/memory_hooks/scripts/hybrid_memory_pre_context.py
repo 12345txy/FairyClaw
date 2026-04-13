@@ -8,7 +8,7 @@ import logging
 from dataclasses import replace
 from pathlib import Path
 
-from fairyclaw.capabilities.memory_hooks.scripts._vectorstore import LocalVectorStore
+from ._vectorstore import LocalVectorStore
 from fairyclaw.config.loader import load_yaml
 from fairyclaw.core.agent.hooks.protocol import BeforeLlmCallHookPayload, HookStageInput, HookStageOutput, HookStatus, LlmChatMessage
 from fairyclaw.infrastructure.embedding.service import create_embedding_service

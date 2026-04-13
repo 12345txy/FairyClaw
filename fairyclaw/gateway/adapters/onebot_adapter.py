@@ -14,7 +14,8 @@ import httpx
 from fastapi import APIRouter, Request
 
 from fairyclaw.config.loader import merge_env_keys
-from fairyclaw.config.settings import PROJECT_ROOT, settings
+from fairyclaw.config.locations import resolve_fairyclaw_env_path
+from fairyclaw.config import settings
 from fairyclaw.core.domain import ContentSegment
 from fairyclaw.core.gateway_protocol.models import GatewayInboundMessage, GatewayOutboundMessage, GatewaySenderRef, new_frame_id
 from fairyclaw.gateway.adapters.base import GatewayAdapter
@@ -509,7 +510,7 @@ class OneBotGatewayAdapter(GatewayAdapter):
             elif key == "ONEBOT_SESSION_CMD_PREFIX":
                 self.onebot_session_cmd_prefix = val.strip() or "/sess"
         if updates:
-            merge_env_keys(PROJECT_ROOT / "config" / "fairyclaw.env", updates)
+            merge_env_keys(resolve_fairyclaw_env_path(), updates)
 
     async def send(self, outbound: GatewayOutboundMessage) -> None:
         if outbound.kind == "event":

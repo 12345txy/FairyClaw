@@ -5,7 +5,7 @@ from typing import Any, Dict
 from fairyclaw.sdk.group_runtime import expect_group_config
 from fairyclaw.sdk.subtasks import is_sub_session_cancel_requested
 from fairyclaw.sdk.tools import ToolContext
-from fairyclaw.capabilities.core_ops.config import CoreOpsRuntimeConfig
+from fairyclaw_plugins.core_ops.config import CoreOpsRuntimeConfig
 
 async def execute(args: Dict[str, Any], context: ToolContext) -> str:
     """Execute shell command with timeout and captured output streams.

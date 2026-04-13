@@ -7,26 +7,33 @@ from pathlib import Path
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from fairyclaw.config.env_normalize import normalize_database_url_value
+from fairyclaw.config import locations
 
+# Repository / source tree root (legacy); prefer ``locations.path_anchor()`` for user paths.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 class Settings(BaseSettings):
     """Central runtime configuration loaded from environment variables."""
 
-    model_config = SettingsConfigDict(env_prefix="FAIRYCLAW_", env_file=("config/fairyclaw.env", ".env"), extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="FAIRYCLAW_",
+        env_file=locations.settings_env_file_tuple(),
+        extra="ignore",
+    )
 
     api_token: str = "sk-fairyclaw-dev-token"
     database_url: str = "sqlite+aiosqlite:///./data/fairyclaw.db"
     data_dir: str = "./data"
     host: str = "0.0.0.0"
     port: int = 16000
-    llm_endpoints_config_path: str = str(PROJECT_ROOT / "config/llm_endpoints.yaml")
+    llm_endpoints_config_path: str = Field(default_factory=locations.default_llm_endpoints_config_path)
     filesystem_root_dir: str | None = None
     log_level: str = "INFO"
     log_file_path: str = "./data/logs/fairyclaw.log"
     log_to_stdout: bool = False
-    capabilities_dir: str = str(PROJECT_ROOT / "fairyclaw/capabilities")
+    capabilities_dir: str = Field(default_factory=locations.default_capabilities_dir)
     execution_timeout_seconds: int = 30
     web_proxy: str | None = None
     event_bus_worker_count: int = 2
@@ -66,22 +73,21 @@ class Settings(BaseSettings):
         ),
     )
 
+    @field_validator("database_url", mode="after")
+    @classmethod
+    def absolutize_sqlite_url(cls, v: str) -> str:
+        anchor = locations.path_anchor()
+        return normalize_database_url_value(v, anchor)
+
     @field_validator("llm_endpoints_config_path", "capabilities_dir", "log_file_path", "data_dir", "filesystem_root_dir")
     @classmethod
     def resolve_path(cls, v: str | None) -> str | None:
-        """Resolve configured path relative to project root.
-
-        Args:
-            v (str | None): Raw path value from configuration.
-
-        Returns:
-            str | None: Absolute normalized path or None.
-        """
+        """Resolve configured path relative to ``config`` parent (state root or repo root)."""
         if v is None:
             return None
         path = Path(v)
         if not path.is_absolute():
-            return str(PROJECT_ROOT / path)
+            return str((locations.path_anchor() / path).resolve())
         return v
 
     def ensure_dirs(self) -> None:

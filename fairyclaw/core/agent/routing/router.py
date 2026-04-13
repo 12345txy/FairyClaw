@@ -32,6 +32,10 @@ class ToolRouter:
         self.registry = registry
         self.llm_client = create_llm_client(profile_name=settings.router_profile_name)
 
+    def reload_llm_client(self) -> None:
+        """Recreate router LLM client after ``llm_endpoints.yaml`` changes (matches ``config.llm.put``)."""
+        self.llm_client = create_llm_client(profile_name=settings.router_profile_name)
+
     async def select_groups(self, user_input: str) -> Optional[List[str]]:
         """Select capability groups to enable for current delegated task.
 

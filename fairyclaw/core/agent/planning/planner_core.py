@@ -38,15 +38,21 @@ class BasePlanner:
         self.message_assembler = LlmMessageAssembler()
 
     def reload_llm_client(self) -> None:
-        """Reload the default LLM client from disk after ``apply_llm_document``."""
+        """Reload LLM clients from disk after ``apply_llm_document`` / ``config.llm.put``.
+
+        Refreshes the default (planner) client and the ToolRouter client used for sub-agent
+        deferred routing (`router` profile)—both were previously long-lived from process start.
+        """
         self.llm_client = create_default_llm_client()
+        self.router.reload_llm_client()
 
     def resolve_llm_client(self, task_type: str):
         """Resolve LLM client by task type with graceful fallback."""
-        if task_type == "general":
+        tt = (task_type or "").strip().lower()
+        if tt in ("", "general"):
             return self.llm_client
         try:
-            return create_llm_client(task_type)
+            return create_llm_client(tt)
         except RuntimeError:
             logger.warning("Profile '%s' not found, falling back to default main profile.", task_type)
             return self.llm_client

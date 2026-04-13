@@ -9,7 +9,9 @@ import importlib.util
 import inspect
 import json
 import logging
+import re
 import sys
+import types
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
 
@@ -23,6 +25,35 @@ from fairyclaw.core.capabilities.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+_PKG_SEGMENT_RE = re.compile(r"[^0-9a-zA-Z_]")
+
+
+def _sanitize_python_module_segment(raw: str) -> str:
+    """Make a filesystem or manifest token safe as a single dotted-module segment."""
+    s = _PKG_SEGMENT_RE.sub("_", raw.strip())
+    if s and s[0].isdigit():
+        s = "_" + s
+    return s or "_"
+
+
+def _ensure_hook_script_package(package_name: str, scripts_dir: Path) -> None:
+    """Register a package whose ``__path__`` is this group's ``scripts/`` dir.
+
+    Hook scripts use sibling imports (e.g. ``from ._vectorstore import ...``). A single global
+    ``capabilities.hooks.*`` name breaks because the parent package is missing and groups would
+    share one namespace while ``_vectorstore`` lives per-group under different directories.
+    """
+    scripts_s = str(scripts_dir.resolve())
+    if package_name in sys.modules:
+        existing = sys.modules[package_name]
+        paths = getattr(existing, "__path__", None)
+        if paths is not None and scripts_s not in paths:
+            paths.append(scripts_s)
+        return
+    pkg = types.ModuleType(package_name)
+    pkg.__path__ = [scripts_s]
+    sys.modules[package_name] = pkg
 
 
 class CapabilityRegistry:
@@ -86,7 +117,7 @@ class CapabilityRegistry:
                         self.hooks[group.name] = group.hook_definitions
                         for hook_def in group.hook_definitions:
                             script_path = (group_dir / "scripts" / hook_def.script).resolve()
-                            self._load_hook_executor(hook_def, script_path)
+                            self._load_hook_executor(hook_def, script_path, group_dir)
                             
                     except Exception as e:
                         logger.error(f"Error loading capabilities from {group_dir}: {e}")
@@ -116,13 +147,13 @@ class CapabilityRegistry:
                 # name (not the manifest's group_name, which may use a
                 # different casing/convention).  This ensures that dynamic
                 # loading and a normal
-                #   `from fairyclaw.capabilities.<dir>.config import ...`
+                #   `from fairyclaw_plugins.<dir>.config import ...`
                 # share the same sys.modules entry and therefore the same
                 # class objects.  Without this, isinstance() fails with the
                 # confusing "expected Foo, got Foo" message.
                 mod_stem = candidate[:-3]  # "config" or "__init__"
                 dir_name = group_dir.name  # e.g. "sourced_research", not "SourcedResearch"
-                module_name = f"fairyclaw.capabilities.{dir_name}.{mod_stem}"
+                module_name = f"fairyclaw_plugins.{dir_name}.{mod_stem}"
                 if module_name in sys.modules:
                     module = sys.modules[module_name]
                 else:
@@ -180,17 +211,22 @@ class CapabilityRegistry:
         except Exception as e:
             logger.error(f"Error loading script for tool {tool_name}: {e}")
 
-    def _load_hook_executor(self, hook_def: HookDefinition, script_path: Path) -> None:
+    def _load_hook_executor(self, hook_def: HookDefinition, script_path: Path, group_dir: Path) -> None:
         """Dynamically load execute_hook() or execute() from hook script."""
         hook_name = hook_def.name
         if not script_path.exists():
             logger.error(f"Script not found for hook {hook_name}: {script_path}")
             return
         try:
-            module_name = f"capabilities.hooks.{hook_name}"
+            scripts_dir = script_path.parent
+            pkg = "fairyclaw_cap_" + _sanitize_python_module_segment(group_dir.name)
+            hook_seg = _sanitize_python_module_segment(hook_name)
+            module_name = f"{pkg}.{hook_seg}"
+            _ensure_hook_script_package(pkg, scripts_dir)
             spec = importlib.util.spec_from_file_location(module_name, script_path)
             if spec and spec.loader:
                 module = importlib.util.module_from_spec(spec)
+                module.__package__ = pkg
                 sys.modules[module_name] = module
                 spec.loader.exec_module(module)
                 handler_cls = self._find_event_hook_handler_class(module)

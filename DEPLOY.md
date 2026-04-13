@@ -30,12 +30,14 @@ User / Bot client
 
 ## 2. Configuration
 
-`fairyclaw start` cold start (from a checkout with `config/`):
+`fairyclaw start` cold start:
 
-1. Writes `config/fairyclaw.env` from `config/fairyclaw.env.example` when the former is missing or empty/invalid.
-2. Writes `config/llm_endpoints.yaml` from `config/llm_endpoints.yaml.example` when the former is missing or empty/invalid.
+1. Chooses **`config/`**: `FAIRYCLAW_CONFIG_DIR`, else `./config` if it exists under the current working directory, else **`$FAIRYCLAW_HOME/config`** (default **`~/.fairyclaw/config`**).
+2. Writes `fairyclaw.env` / `llm_endpoints.yaml` from local `*.example` files or bundled `fairyclaw/config_templates/` when missing or empty/invalid.
+3. Rewrites path-like `FAIRYCLAW_*` keys in `fairyclaw.env` to **absolute** paths (same anchor as `config/`’s parent).
+4. Copies **missing** capability groups from the installed package seed into **`FAIRYCLAW_CAPABILITIES_DIR`**; **skips** groups that already differ from the seed (user-modified). Use **`fairyclaw capabilities upgrade`** to force overwrite (see README).
 
-The server reads and persists settings to those project paths (and `data/` for SQLite, logs, uploads). There is no separate copy under `~/.fairyclaw`.
+The server reads and persists settings under that layout (`data/`, gateway merges into `fairyclaw.env`, etc.).
 
 You can still copy manually if you prefer:
 
@@ -68,7 +70,10 @@ openssl rand -hex 32
 | `FAIRYCLAW_PORT` | `16000` | Business port. Keep internal — do not expose directly. |
 | `FAIRYCLAW_DATABASE_URL` | `sqlite+aiosqlite:///./data/fairyclaw.db` | SQLite default. Set a PostgreSQL URL for production. |
 | `FAIRYCLAW_DATA_DIR` | `./data` | Directory for DB, logs, and uploaded files. |
-| `FAIRYCLAW_LLM_ENDPOINTS_CONFIG_PATH` | `./config/llm_endpoints.yaml` | Path to LLM provider config. |
+| `FAIRYCLAW_HOME` | *(unset)* | State root; default `~/.fairyclaw` when `./config` is not used. |
+| `FAIRYCLAW_CONFIG_DIR` | *(unset)* | Explicit `config/` directory (overrides cwd `./config` and `FAIRYCLAW_HOME/config`). |
+| `FAIRYCLAW_CAPABILITIES_DIR` | `./capabilities` (bundled template) or `./fairyclaw/capabilities` (monorepo example) | Writable capability tree; materialized from the package seed on cold start. |
+| `FAIRYCLAW_LLM_ENDPOINTS_CONFIG_PATH` | `./config/llm_endpoints.yaml` | Path to LLM provider config (resolved relative to the config parent). |
 | `FAIRYCLAW_FILESYSTEM_ROOT_DIR` | *(unset)* | Root directory that file-system tools can access. Required when using `fs_read`, `fs_write`, etc. |
 | `FAIRYCLAW_LOG_LEVEL` | `INFO` | Log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
 | `FAIRYCLAW_LOG_FILE_PATH` | `./data/logs/fairyclaw.log` | Log file path. |

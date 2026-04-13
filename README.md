@@ -1,6 +1,137 @@
 # FairyClaw
 
-FairyClaw is an async agent runtime built for **long-running server-side deployments**. It structures session scheduling, LLM inference, and capability extension into clear layers, so complex tasks can run in parallel and be resumed — while still following a **clean, predictable main execution path**.
+FairyClaw is an async agent runtime for **long-running server-side deployments**. It separates session scheduling, LLM inference, and capability extension into clear layers so work can run in parallel and resume safely, while keeping a **short, observable main execution path**.
+
+---
+
+## Quick Start
+
+### Install from PyPI
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install fairyclaw
+```
+
+### Optional: install from a git checkout
+
+```bash
+git clone https://github.com/PKULab1806/FairyClaw.git
+cd FairyClaw
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+```
+
+### Run
+
+```bash
+# Matches the profile in config/llm_endpoints.yaml (see FAIRYCLAW_LLM_* / api_key_env)
+export OPENAI_API_KEY="your_key_here"
+
+fairyclaw start
+```
+
+`fairyclaw start` builds the web UI (unless `--skip-build`), then starts **Business** + **Gateway**:
+
+| | Default |
+|---|--------|
+| Business | `http://0.0.0.0:16000` (internal; `/healthz`, bridge WebSocket) |
+| Gateway + Web UI | `http://0.0.0.0:8081` — open **`http://127.0.0.1:8081/app`** on the same machine |
+| Stale listeners on those ports | Stopped automatically unless you pass **`--no-kill-stale`** |
+
+**Config and data**
+
+| Layout | Config directory | State root (data, logs, writable capabilities) |
+|--------|------------------|-----------------------------------------------|
+| **PyPI / no `./config` in cwd** | **`~/.fairyclaw/config`** (or **`$FAIRYCLAW_HOME/config`**) | **`~/.fairyclaw/`** — paths like `./data` and `./capabilities` in `fairyclaw.env` resolve under this tree |
+| **Git clone** (usual dev) | **`./config`** when that folder exists in the current working directory | Parent of `config/` (often the repo root) |
+
+Override config location with **`FAIRYCLAW_CONFIG_DIR`** if needed.
+
+Set **`FAIRYCLAW_API_TOKEN`** before startup if you do not want the default dev token for WebSocket auth.
+
+More deployment options: [DEPLOY.md](DEPLOY.md). To embed a fresh frontend in the wheel: `python scripts/prepare_web_dist.py` then `python -m build`.
+
+---
+
+## Key features
+
+| | |
+|---|---|
+| **Event-driven steps** | Sessions advance on runtime events. The Planner does **one inference step → re-wakeup** instead of one giant request, so the main path stays short and easy to trace. |
+| **Capability groups** | Capabilities are not a flat tool list. Related tools, Hooks, and extensions ship as a **group**. Sub-agents **cluster** similar groups, then **route** into one bucket and enable that tool set. |
+| **Built-in workflows** | Groups can encode multi-tool pipelines (e.g. **SourcedResearch**: search → excerpt → citations) so delegated work stays verifiable instead of free-form claims. |
+| **Plugins, not core edits** | Tools, turn Hooks, runtime Hooks, and custom `event_types` register through **manifest + scripts**, not hard-coded core. |
+| **Two processes** | **Business** (runtime + Planner) and **Gateway** (web `/v1/ws`, OneBot, etc.) talk over an internal WebSocket bridge so you can scale or swap the Gateway independently. |
+
+---
+
+## Updating capability groups
+
+Commands are the same for everyone; **where files land** depends on how you run FairyClaw.
+
+### After `pip install` (typical user)
+
+With no `./config` in your current directory, cold start uses **`~/.fairyclaw/config`** and resolves **`./capabilities`**, **`./data`**, etc. under **`~/.fairyclaw/`**.
+
+```bash
+# Add missing groups from the installed package seed (skip groups you already changed)
+fairyclaw capabilities sync
+
+# Overwrite from the package seed (backups by default; use --dry-run / --group to narrow)
+fairyclaw capabilities upgrade
+```
+
+Edit the tree under **`~/.fairyclaw/capabilities/`** (or the path in **`FAIRYCLAW_CAPABILITIES_DIR`** in `fairyclaw.env`).
+
+### Git clone / monorepo (developer)
+
+Point **`FAIRYCLAW_CAPABILITIES_DIR`** at the repo seed, e.g. **`./fairyclaw/capabilities`**, in `config/fairyclaw.env`. Run the same CLI from the repo (or anywhere, if **`FAIRYCLAW_CONFIG_DIR`** is set):
+
+```bash
+fairyclaw capabilities sync
+fairyclaw capabilities upgrade --group my_group   # example
+```
+
+Cold start and `fairyclaw start` still materialize or skip groups per seed rules; see [CONTRIBUTING.md](CONTRIBUTING.md) for manifest schema and Hook boundaries.
+
+---
+
+## Documentation
+
+Keep **[AI_SYSTEM_GUIDE.md](AI_SYSTEM_GUIDE.md)** and this **README** aligned when you change gateway surfaces, bridge behavior, or control-plane events.
+
+| Document | Contents |
+|---|---|
+| [AI_SYSTEM_GUIDE.md](AI_SYSTEM_GUIDE.md) | **Canonical system reference**: architecture, events, Hooks, sub-agents, dev conventions |
+| [README.md](README.md) | **Overview**, quick start, capability paths |
+| [LAYOUT.md](LAYOUT.md) | Module map: directories and key files |
+| [docs/GATEWAY_ENVELOPE.md](docs/GATEWAY_ENVELOPE.md) | Gateway–Business bridge: frames, lifecycle, files |
+| [fairyclaw/core/gateway_protocol/GATEWAY_RUNTIME_PROTOCOL.md](fairyclaw/core/gateway_protocol/GATEWAY_RUNTIME_PROTOCOL.md) | Control envelopes and web `/v1/ws` push shapes |
+| [DEPLOY.md](DEPLOY.md) | venv, Docker, systemd, Web UI, OneBot/NapCat |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Extending capability groups: manifests, Hooks, examples |
+
+---
+
+## Extending capabilities
+
+In the **repository**, seed groups live under **`fairyclaw/capabilities/`**. At runtime, the loader reads **`FAIRYCLAW_CAPABILITIES_DIR`** (writable tree). Minimal layout:
+
+```text
+my_group/
+├── manifest.json
+└── scripts/
+    └── my_tool.py
+```
+
+Details: [CONTRIBUTING.md](CONTRIBUTING.md).
+
+---
+
+## Execution loop (diagram)
+
+How a single Planner turn interacts with the bus, LLM, and tools:
 
 ```mermaid
 sequenceDiagram
@@ -25,84 +156,6 @@ sequenceDiagram
   end
   Plan->>Bus: follow-up if needed (new event re-enters the bus)
 ```
-
----
-
-## Key Features
-
-**Event-driven, single-step advancement**
-Sessions are driven by runtime events. The Planner advances via a "one inference step → re-wakeup" loop rather than stuffing an entire task chain into a single request. The main path stays short and observable, making multi-session isolation, compensation, and monitoring straightforward.
-
-**Capability Groups: cluster first, route second**
-Capabilities are not a flat list of tool names. Related tools, Hooks, and extensions are declared together as a **Capability Group**. Sub-agents route between groups — first bucketing semantically similar capabilities, then enabling the tool set within the chosen bucket — collapsing "what to pick" from an unbounded tool list into a small set of structured decisions.
-
-**Structured capability groups with built-in workflows —— new Skills defination instead of Skill.md**
-Capability groups bundle related tools together with descriptions that guide tool selection order. The `SourcedResearch` group is an example: three tools enforce a search → excerpt → citation-format pipeline so sub-agents produce verifiable, citation-backed answers rather than unsupported claims. This group is not exposed to the main Planner; it is enabled only when the `ToolRouter` selects it for a delegated sub-task.
-
-**Clean execution path + full plugin architecture**
-The core orchestration stays lean and well-bounded. Concrete capabilities are delivered via manifest + script: tools, Turn Hooks, runtime event Hooks, and custom `event_types` are all registered declaratively rather than hard-coded in core.
-
-**Dual-process architecture**
-The Business process (runtime + Planner) and the Gateway process (user-facing adapters: WebSocket web UI at `/v1/ws`, OneBot, etc.) communicate over an internal WebSocket bridge. Responsibilities are cleanly separated; the Gateway can scale or be replaced independently.
-
----
-
-## Documentation
-
-Keep **[AI_SYSTEM_GUIDE.md](AI_SYSTEM_GUIDE.md)** and this **README** aligned with the running system when you change gateway surfaces, bridge behavior, or control-plane events (they are the canonical entry points for humans and tooling).
-
-| Document | Contents |
-|---|---|
-| [AI_SYSTEM_GUIDE.md](AI_SYSTEM_GUIDE.md) | **Canonical system reference**: architecture, event model, Hook protocol, Sub-Agent mechanics, development conventions (useful for both AI assistants and human developers) |
-| [README.md](README.md) | **Project overview**, quick start, and documentation index |
-| [LAYOUT.md](LAYOUT.md) | Module responsibility map: every directory and key file at a glance |
-| [docs/GATEWAY_ENVELOPE.md](docs/GATEWAY_ENVELOPE.md) | Gateway–Business WebSocket bridge protocol: frame structure, lifecycle, file transfer |
-| [fairyclaw/core/gateway_protocol/GATEWAY_RUNTIME_PROTOCOL.md](fairyclaw/core/gateway_protocol/GATEWAY_RUNTIME_PROTOCOL.md) | Control envelope types and web `/v1/ws` push shapes (including `kind=event` tool_call / tool_result) |
-| [DEPLOY.md](DEPLOY.md) | Deployment guide: Python venv, Docker Compose, systemd, Web UI, OneBot/NapCat setup |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution guide: capability group extension, Hook boundary types, manifest schema |
-
----
-
-## Quick Start
-
-```bash
-# 1. Install
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
-
-# 2. Export your LLM API key (matches config/llm_endpoints.yaml*.api_key_env)
-export OPENAI_API_KEY="your_openai_api_key"
-
-# 3. Start all-in-one (build web + start business/gateway)
-fairyclaw start
-```
-
-`fairyclaw start` defaults:
-- business: `0.0.0.0:16000`
-- gateway/web: `0.0.0.0:8081` (`/app`)
-- config: project `config/` (resolved from the current working directory; created if missing); state under project `data/`
-- if those ports are still held by a previous uvicorn, stale listeners are stopped automatically (`lsof`/`fuser`); use `--no-kill-stale` to disable
-
-Cold start: `fairyclaw start` seeds `config/fairyclaw.env` from `config/fairyclaw.env.example` and `config/llm_endpoints.yaml` from `config/llm_endpoints.yaml.example` when a target file is missing or empty/invalid. The running process reads and writes those same paths (including API/UI updates), so changes stay in the repo tree. If `config/` is absent (e.g. wheel-only install), it is created and bundled templates inside the `fairyclaw` package are used when needed.
-
-If needed, also set `FAIRYCLAW_API_TOKEN` before startup to override the default placeholder token used by the web gateway auth.
-
-For detailed steps — Docker, systemd, Web UI, OneBot/NapCat integration — see [DEPLOY.md](DEPLOY.md). For packaging wheels with embedded frontend assets, run `python scripts/prepare_web_dist.py` before `python -m build`.
-
----
-
-## Extending Capabilities
-
-The fastest way to extend FairyClaw is to add a capability group directory under `fairyclaw/capabilities/`:
-
-```
-fairyclaw/capabilities/my_group/
-├── manifest.json    ← declare tools, skills, hooks
-└── scripts/
-    └── my_tool.py   ← tool implementation
-```
-
-For Hook boundary types, manifest field conventions, and complete examples, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
