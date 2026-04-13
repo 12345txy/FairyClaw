@@ -42,6 +42,14 @@ def test_subagent_snapshot_uses_distinct_label_and_terminal_status(monkeypatch) 
                 assert session_id == "sess_sub_snapshot"
                 return SimpleNamespace(title="delegate", updated_at=dt.datetime.now(dt.timezone.utc))
 
+        class FakeEventRepo:
+            def __init__(self, db) -> None:
+                self.db = db
+
+            async def session_event_stats(self, session_id: str) -> tuple[int, int | None]:
+                assert session_id == "sess_sub_snapshot"
+                return (0, None)
+
         state = get_or_create_subtask_state("sess_main_snapshot")
         state.register_task("sess_sub_snapshot", "scan docs and summarize", time.time())
         state.update_status("sess_sub_snapshot", "running:general")
@@ -50,6 +58,7 @@ def test_subagent_snapshot_uses_distinct_label_and_terminal_status(monkeypatch) 
         monkeypatch.setattr("fairyclaw.bridge.user_gateway.AsyncSessionLocal", FakeSessionLocal)
         monkeypatch.setattr("fairyclaw.bridge.user_gateway.GatewaySessionRouteRepository", FakeRouteRepo)
         monkeypatch.setattr("fairyclaw.bridge.user_gateway.SessionRepository", FakeSessionRepo)
+        monkeypatch.setattr("fairyclaw.bridge.user_gateway.EventRepository", FakeEventRepo)
         gateway.push_outbound = fake_push_outbound  # type: ignore[method-assign]
 
         await gateway.emit_subagent_tasks_snapshot("sess_main_snapshot")
@@ -103,9 +112,18 @@ def test_subagent_snapshot_uses_persisted_terminal_status_when_memory_missing(mo
                     },
                 )
 
+        class FakeEventRepo:
+            def __init__(self, db) -> None:
+                self.db = db
+
+            async def session_event_stats(self, session_id: str) -> tuple[int, int | None]:
+                assert session_id == "sess_sub_persisted"
+                return (3, 1_700_000_000_000)
+
         monkeypatch.setattr("fairyclaw.bridge.user_gateway.AsyncSessionLocal", FakeSessionLocal)
         monkeypatch.setattr("fairyclaw.bridge.user_gateway.GatewaySessionRouteRepository", FakeRouteRepo)
         monkeypatch.setattr("fairyclaw.bridge.user_gateway.SessionRepository", FakeSessionRepo)
+        monkeypatch.setattr("fairyclaw.bridge.user_gateway.EventRepository", FakeEventRepo)
         gateway.push_outbound = fake_push_outbound  # type: ignore[method-assign]
 
         await gateway.emit_subagent_tasks_snapshot("sess_main_persisted")
@@ -116,5 +134,7 @@ def test_subagent_snapshot_uses_persisted_terminal_status_when_memory_missing(mo
         assert tasks[0]["status"] == "completed"
         assert tasks[0]["status_display"] == "completed"
         assert tasks[0]["label"].startswith("general | collect evidence")
+        assert tasks[0]["event_count"] == 3
+        assert tasks[0]["last_event_at_ms"] == 1_700_000_000_000
 
     asyncio.run(scenario())

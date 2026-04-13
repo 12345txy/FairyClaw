@@ -115,4 +115,6 @@ export type SubagentTaskRow = {
   instruction?: string
   updated_at_ms: number
   child_session_id?: string | null
+  event_count?: number
+  last_event_at_ms?: number
 }

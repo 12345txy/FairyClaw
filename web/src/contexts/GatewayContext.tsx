@@ -68,6 +68,11 @@ type GatewayContextValue = {
   loadServerSessions: () => Promise<void>
   sendWsOp: (op: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>
   restoreSession: (sessionId: string) => Promise<void>
+  selectedSubtaskChildId: string | null
+  selectedSubtaskLabel: string | null
+  subtaskLogsByChildId: Record<string, LogEntry[]>
+  selectSubtaskMonitor: (childSessionId: string, label?: string) => void
+  clearSubtaskMonitor: () => void
 }
 
 const GatewayContext = createContext<GatewayContextValue | null>(null)
@@ -168,6 +173,9 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
   const [sessionUsage, setSessionUsage] = useState<SessionUsageView | null>(null)
   const [subagentTasksBySession, setSubagentTasksBySession] = useState<Record<string, SubagentTaskRow[]>>({})
   const [serverSessions, setServerSessions] = useState<ServerSessionRow[]>([])
+  const [selectedSubtaskChildId, setSelectedSubtaskChildId] = useState<string | null>(null)
+  const [selectedSubtaskLabel, setSelectedSubtaskLabel] = useState<string | null>(null)
+  const [subtaskLogsByChildId, setSubtaskLogsByChildId] = useState<Record<string, LogEntry[]>>({})
 
   const wsRef = useRef<WebSocket | null>(null)
   const pendingRef = useRef(
@@ -209,15 +217,43 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
     )
   }, [messageText, pendingFilesBySession, sessionId, wsState])
 
+  const selectSubtaskMonitor = useCallback((childSessionId: string, label?: string) => {
+    const target = childSessionId.trim()
+    if (!target) {
+      return
+    }
+    setSelectedSubtaskChildId(target)
+    setSelectedSubtaskLabel(label?.trim() || null)
+  }, [])
+
+  const clearSubtaskMonitor = useCallback(() => {
+    setSelectedSubtaskChildId(null)
+    setSelectedSubtaskLabel(null)
+  }, [])
+
   const handlePush = useCallback((raw: unknown) => {
     if (!raw || typeof raw !== 'object') {
       return
     }
     const payload = raw as SessionEventMessage & { kind?: string }
     const now = Date.now()
+    const targetSession = payload.session_id || sessionIdRef.current
+    const isMainSessionPush = targetSession === sessionIdRef.current
+    const appendEntry = (entry: LogEntry) => {
+      if (isMainSessionPush) {
+        setMessagesBySession((current) => ({
+          ...current,
+          [targetSession]: [...(current[targetSession] || []), entry],
+        }))
+        return
+      }
+      setSubtaskLogsByChildId((current) => ({
+        ...current,
+        [targetSession]: [...(current[targetSession] || []), entry],
+      }))
+    }
     try {
       if (payload.kind === 'text' && payload.content?.text) {
-        const targetSession = payload.session_id || sessionIdRef.current
         const text = payload.content.text
         if (isSystemNotificationText(text)) {
           return
@@ -229,54 +265,60 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
           sessionId: targetSession,
           ts: now,
         }
-        setMessagesBySession((current) => ({
-          ...current,
-          [targetSession]: [
-            ...(current[targetSession] || []),
-            entry,
-          ],
-        }))
-        stopWaitingAssistant(targetSession)
+        appendEntry(entry)
+        if (isMainSessionPush) {
+          stopWaitingAssistant(targetSession)
+        }
         return
       }
       if (payload.kind === 'file') {
-        const targetSession = payload.session_id || sessionIdRef.current
-        const fileId = payload.content?.file_id || (payload.meta?.file_id as string | undefined)
-        if (!fileId) {
+        const mainSid = sessionIdRef.current.trim()
+        const parentFromMeta =
+          payload.meta && typeof payload.meta.fc_parent_session_id === 'string'
+            ? String(payload.meta.fc_parent_session_id).trim()
+            : ''
+        const mirrorFileToMain =
+          Boolean(mainSid) && !isMainSessionPush && parentFromMeta === mainSid
+
+        const appendMirroredToMain = (entry: LogEntry) => {
+          if (!mirrorFileToMain) {
+            return
+          }
           setMessagesBySession((current) => ({
             ...current,
-            [targetSession]: [
-              ...(current[targetSession] || []),
-              {
-                id: makeId('system'),
-                role: 'system',
-                text: tRef.current('msg.fileMissingId'),
-                sessionId: targetSession,
-                ts: now,
-              },
-            ],
+            [mainSid]: [...(current[mainSid] || []), { ...entry, id: makeId('mirror') }],
           }))
+        }
+
+        const fileId = payload.content?.file_id || (payload.meta?.file_id as string | undefined)
+        if (!fileId) {
+          const missing: LogEntry = {
+            id: makeId('system'),
+            role: 'system',
+            text: tRef.current('msg.fileMissingId'),
+            sessionId: targetSession,
+            ts: now,
+          }
+          appendEntry(missing)
+          appendMirroredToMain(missing)
           return
         }
         const filename = payload.content?.filename || fileId
-        setMessagesBySession((current) => ({
-          ...current,
-          [targetSession]: [
-            ...(current[targetSession] || []),
-            {
-              id: makeId('assistant'),
-              role: 'assistant',
-              file: { fileId, filename },
-              sessionId: targetSession,
-              ts: now,
-            },
-          ],
-        }))
-        stopWaitingAssistant(targetSession)
+        const fileEntry: LogEntry = {
+          id: makeId('assistant'),
+          role: 'assistant',
+          file: { fileId, filename },
+          sessionId: targetSession,
+          ts: now,
+        }
+        appendEntry(fileEntry)
+        appendMirroredToMain(fileEntry)
+        if (isMainSessionPush) {
+          stopWaitingAssistant(targetSession)
+        }
         return
       }
       if (payload.kind === 'event') {
-        const targetSession = payload.session_id || sessionIdRef.current
         const et = payload.content?.event_type
         if (et === 'tool_call') {
           const toolCallId = String(payload.content?.tool_call_id || '')
@@ -284,22 +326,16 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
           const args = payload.content?.arguments
           const argumentsJson =
             args && typeof args === 'object' ? JSON.stringify(args, null, 2) : '{}'
-          setMessagesBySession((current) => ({
-            ...current,
-            [targetSession]: [
-              ...(current[targetSession] || []),
-              {
-                id: makeId('tool'),
-                role: 'system',
-                kind: 'tool_call',
-                toolCallId,
-                toolName,
-                argumentsJson,
-                sessionId: targetSession,
-                ts: now,
-              },
-            ],
-          }))
+          appendEntry({
+            id: makeId('tool'),
+            role: 'system',
+            kind: 'tool_call',
+            toolCallId,
+            toolName,
+            argumentsJson,
+            sessionId: targetSession,
+            ts: now,
+          })
           return
         }
         if (et === 'tool_result') {
@@ -313,23 +349,17 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
           } else {
             detail = String(payload.content?.error_message || '')
           }
-          setMessagesBySession((current) => ({
-            ...current,
-            [targetSession]: [
-              ...(current[targetSession] || []),
-              {
-                id: makeId('tool'),
-                role: 'system',
-                kind: 'tool_result',
-                toolCallId,
-                toolName,
-                ok,
-                detail,
-                sessionId: targetSession,
-                ts: now,
-              },
-            ],
-          }))
+          appendEntry({
+            id: makeId('tool'),
+            role: 'system',
+            kind: 'tool_result',
+            toolCallId,
+            toolName,
+            ok,
+            detail,
+            sessionId: targetSession,
+            ts: now,
+          })
           return
         }
         if (et === 'telemetry') {
@@ -346,7 +376,12 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
         }
         if (et === 'subagent_tasks') {
           const rawTasks = payload.content?.tasks
-          const parent = String(payload.session_id || targetSession)
+          const parentFromMeta =
+            payload.meta &&
+            typeof payload.meta.fc_parent_session_id === 'string'
+              ? payload.meta.fc_parent_session_id
+              : null
+          const parent = String(parentFromMeta || payload.session_id || sessionIdRef.current)
           if (!Array.isArray(rawTasks)) {
             return
           }
@@ -374,6 +409,9 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
                 typeof o.instruction === 'string' ? o.instruction : undefined,
               updated_at_ms: typeof o.updated_at_ms === 'number' ? o.updated_at_ms : now,
               child_session_id: child != null ? String(child) : null,
+              event_count: typeof o.event_count === 'number' ? o.event_count : undefined,
+              last_event_at_ms:
+                typeof o.last_event_at_ms === 'number' ? o.last_event_at_ms : undefined,
             })
           }
           setSubagentTasksBySession((prev) => ({ ...prev, [parent]: parsed }))
@@ -581,6 +619,9 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
               typeof o.instruction === 'string' ? o.instruction : undefined,
             updated_at_ms: typeof o.updated_at_ms === 'number' ? o.updated_at_ms : now,
             child_session_id: child != null ? String(child) : null,
+            event_count: typeof o.event_count === 'number' ? o.event_count : undefined,
+            last_event_at_ms:
+              typeof o.last_event_at_ms === 'number' ? o.last_event_at_ms : undefined,
           })
         }
         setSubagentTasksBySession((prev) => ({ ...prev, [target]: parsed }))
@@ -633,6 +674,34 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
     void loadSessionUsage(sessionId)
     void loadSubagentTasks(sessionId)
   }, [loadSessionUsage, loadSubagentTasks, sessionId, wsState, messagesBySession[sessionId]?.length])
+
+  useEffect(() => {
+    clearSubtaskMonitor()
+  }, [clearSubtaskMonitor, sessionId])
+
+  useEffect(() => {
+    const childId = selectedSubtaskChildId?.trim() || ''
+    if (!childId || wsState !== 'connected') {
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const body = await sendOp('sessions.history', { session_id: childId, limit: 200 })
+        const events = body.events
+        const entries = Array.isArray(events) ? mapHistoryToLogEntries(childId, events) : []
+        if (cancelled) {
+          return
+        }
+        setSubtaskLogsByChildId((prev) => ({ ...prev, [childId]: entries }))
+      } catch {
+        // ignore child history refresh failures
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedSubtaskChildId, sendOp, wsState])
 
   const authHeaders = useCallback((): HeadersInit => {
     const token = effectiveApiToken()
@@ -961,6 +1030,11 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
       loadServerSessions,
       sendWsOp: sendOp,
       restoreSession,
+      selectedSubtaskChildId,
+      selectedSubtaskLabel,
+      subtaskLogsByChildId,
+      selectSubtaskMonitor,
+      clearSubtaskMonitor,
     }),
     [
       authHeaders,
@@ -991,6 +1065,11 @@ export function GatewayProvider({ children }: { children: ReactNode }) {
       loadServerSessions,
       restoreSession,
       sendOp,
+      selectedSubtaskChildId,
+      selectedSubtaskLabel,
+      subtaskLogsByChildId,
+      selectSubtaskMonitor,
+      clearSubtaskMonitor,
     ],
   )
 

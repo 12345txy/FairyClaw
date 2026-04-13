@@ -17,6 +17,8 @@ from fairyclaw.core.gateway_protocol.models import (
 )
 from fairyclaw.gateway.adapters.base import GatewayAdapter
 from fairyclaw.gateway.adapters.web_gateway_ws import MSG_PUSH, run_web_gateway_socket
+from fairyclaw.infrastructure.database.repository import GatewaySessionRouteRepository
+from fairyclaw.infrastructure.database.session import AsyncSessionLocal
 
 
 class WebGatewayAdapter(GatewayAdapter):
@@ -89,8 +91,40 @@ class WebGatewayAdapter(GatewayAdapter):
                 sockets = list(self._session_sockets.get(outbound.session_id, ()))
                 self._backlog[outbound.session_id].append(envelope)
                 targets = sockets
+
         for websocket in targets:
             await websocket.send_json(envelope)
+
+        if outbound.session_id != OUTBOUND_BROADCAST_SESSION_ID and not targets:
+            parent_id = await self._parent_session_id_for_push_routing(outbound.session_id)
+            if not parent_id:
+                return
+            meta = dict(payload_body["meta"]) if isinstance(payload_body.get("meta"), dict) else {}
+            if "fc_parent_session_id" not in meta:
+                meta["fc_parent_session_id"] = parent_id
+            fallback_body: dict[str, object] = {
+                "session_id": payload_body["session_id"],
+                "kind": payload_body["kind"],
+                "content": payload_body["content"],
+                "meta": meta,
+            }
+            if "adapter_key" in payload_body:
+                fallback_body["adapter_key"] = payload_body["adapter_key"]
+            if "sender_ref" in payload_body:
+                fallback_body["sender_ref"] = payload_body["sender_ref"]
+            fallback_envelope = {"op": MSG_PUSH, "body": fallback_body}
+            async with self._lock:
+                parent_targets = list(self._session_sockets.get(parent_id, ()))
+            for websocket in parent_targets:
+                await websocket.send_json(fallback_envelope)
+
+    async def _parent_session_id_for_push_routing(self, session_id: str) -> str | None:
+        """Resolve parent session when no Web client bound the child session id (sub-agent pushes)."""
+        if not session_id.strip():
+            return None
+        async with AsyncSessionLocal() as db:
+            repo = GatewaySessionRouteRepository(db)
+            return await repo.get_parent_session_id(session_id)
 
     async def register_client(self, websocket: WebSocket) -> None:
         """Track one web client for broadcast pushes; replay recent broadcast backlog."""

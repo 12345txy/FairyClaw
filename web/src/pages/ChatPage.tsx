@@ -34,10 +34,16 @@ export function ChatPage() {
     sendMessage,
     uploadFile,
     removePendingFile,
+    selectedSubtaskChildId,
+    selectedSubtaskLabel,
+    subtaskLogsByChildId,
+    clearSubtaskMonitor,
   } = useGateway()
 
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const messages = messagesBySession[sessionId] || []
+  const subtaskMessages =
+    selectedSubtaskChildId != null ? (subtaskLogsByChildId[selectedSubtaskChildId] || []) : []
   const pendingFiles = pendingFilesBySession[sessionId] || []
 
   const copyText = useCallback(
@@ -60,16 +66,20 @@ export function ChatPage() {
     }
   }
 
-  return (
-    <div className="chat-page">
+  const renderTimeline = (
+    list: typeof messages,
+    options?: { showWaiting?: boolean; emptyTitle?: string; emptyHint?: string },
+  ) => {
+    const showWaiting = Boolean(options?.showWaiting)
+    return (
       <div className="chat-messages">
-        {messages.length === 0 ? (
+        {list.length === 0 ? (
           <div className="chat-empty">
-            <h2 className="chat-empty__title">{t('chat.emptyTitle')}</h2>
-            <p className="chat-empty__hint">{t('chat.emptyHint')}</p>
+            <h2 className="chat-empty__title">{options?.emptyTitle || t('chat.emptyTitle')}</h2>
+            <p className="chat-empty__hint">{options?.emptyHint || t('chat.emptyHint')}</p>
           </div>
         ) : (
-          messages.map((message) => {
+          list.map((message) => {
             const time = formatTime(message.ts, locale)
             const roleLabel = t(`chat.role.${message.role}`)
             const bubbleClass =
@@ -153,7 +163,7 @@ export function ChatPage() {
             )
           })
         )}
-        {isWaitingAssistant && (
+        {showWaiting && (
           <div className="msg-row msg-row--assistant" role="status" aria-live="polite">
             <article className="msg-bubble msg-bubble--assistant chat-waiting-bubble">
               <span className="chat-waiting__spinner" aria-hidden />
@@ -162,6 +172,35 @@ export function ChatPage() {
           </div>
         )}
       </div>
+    )
+  }
+
+  return (
+    <div className="chat-page">
+      {selectedSubtaskChildId ? (
+        <div className="chat-split">
+          <section className="chat-pane chat-pane--main">{renderTimeline(messages, { showWaiting: isWaitingAssistant })}</section>
+          <section className="chat-pane chat-pane--subtask">
+            <header className="chat-pane__head">
+              <div className="chat-pane__title-wrap">
+                <span className="chat-pane__title">{t('chat.subtaskPanelTitle')}</span>
+                <span className="chat-pane__subtitle">
+                  {selectedSubtaskLabel || selectedSubtaskChildId}
+                </span>
+              </div>
+              <button type="button" className="btn btn--ghost chat-pane__back-btn" onClick={clearSubtaskMonitor}>
+                {t('chat.backToMain')}
+              </button>
+            </header>
+            {renderTimeline(subtaskMessages, {
+              emptyTitle: t('chat.subtaskEmptyTitle'),
+              emptyHint: t('chat.subtaskEmptyHint'),
+            })}
+          </section>
+        </div>
+      ) : (
+        renderTimeline(messages, { showWaiting: isWaitingAssistant })
+      )}
 
       <div className="chat-composer">
         <textarea

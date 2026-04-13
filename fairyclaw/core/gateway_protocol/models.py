@@ -319,7 +319,17 @@ class GatewayInboundMessage:
 
 @dataclass(frozen=True)
 class GatewayOutboundMessage:
-    """One gateway outbound payload."""
+    """One gateway outbound payload.
+
+    ``session_id`` is the session where the payload originated (main web session or child
+    sub-agent session). The Web gateway may deliver to parent-bound sockets when the child
+    id has no subscribers; see GATEWAY_RUNTIME_PROTOCOL.md (Sub-session push routing).
+
+    Reserved ``meta`` keys (Web gateway / sub-session routing):
+
+    - ``fc_parent_session_id`` (str): set when the Web adapter delivers a child-session
+      outbound via the parent's bound WebSocket subscribers.
+    """
 
     session_id: str
     kind: str

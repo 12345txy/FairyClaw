@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 
 import { APP_TITLE, APP_VERSION } from '../constants'
 import { useGateway } from '../contexts/GatewayContext'
@@ -50,8 +50,17 @@ function formatTaskLabel(task: {
 
 export function AppShell() {
   const { locale, setLocale, t } = useLocale()
-  const { wsState, telemetry, sessionUsage, sessionId, subagentTasksBySession } = useGateway()
+  const {
+    wsState,
+    telemetry,
+    sessionUsage,
+    sessionId,
+    subagentTasksBySession,
+    selectedSubtaskChildId,
+    selectSubtaskMonitor,
+  } = useGateway()
   const location = useLocation()
+  const navigate = useNavigate()
 
   const wsLabelKey = `ws.${wsState}` as const
   const wsLabel = t(wsLabelKey)
@@ -137,7 +146,24 @@ export function AppShell() {
               <ul className="right-task-list">
                 {(subagentTasksBySession[sessionId] || []).map((task) => (
                   <li key={task.task_id} className="right-task-list__item">
-                    <span className="right-task-list__label">{formatTaskLabel(task)}</span>
+                    <button
+                      type="button"
+                      className={`right-task-list__label-btn${
+                        task.child_session_id && selectedSubtaskChildId === task.child_session_id
+                          ? ' right-task-list__label-btn--active'
+                          : ''
+                      }`}
+                      disabled={!task.child_session_id}
+                      onClick={() => {
+                        if (!task.child_session_id) {
+                          return
+                        }
+                        selectSubtaskMonitor(task.child_session_id, formatTaskLabel(task))
+                        void navigate('/chat')
+                      }}
+                    >
+                      <span className="right-task-list__label">{formatTaskLabel(task)}</span>
+                    </button>
                     <span className="right-task-list__status">
                       {formatTaskStatus(task.status_display || task.status)}
                     </span>

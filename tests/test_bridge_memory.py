@@ -54,7 +54,7 @@ def test_user_gateway_emit_assistant_and_tool_result(monkeypatch: pytest.MonkeyP
     asyncio.run(scenario())
 
 
-def test_user_gateway_skips_sub_session_assistant_emit(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_user_gateway_emits_sub_session_assistant_for_gateway_routing(monkeypatch: pytest.MonkeyPatch) -> None:
     async def scenario() -> None:
         from fairyclaw.bridge import user_gateway as ug_mod
 
@@ -71,8 +71,12 @@ def test_user_gateway_skips_sub_session_assistant_emit(monkeypatch: pytest.Monke
             (ContentSegment.text_segment("sub reply"),),
         )
         assert assistant_message is not None
-        await gw.emit_assistant_text("sess_sub_1", "sub reply")
+        sub_sid = "main_sess_sub_child1"
+        await gw.emit_assistant_text(sub_sid, "sub reply")
 
-        assert pushed == []
+        assert len(pushed) == 1
+        assert pushed[0].kind == OUTBOUND_KIND_TEXT
+        assert pushed[0].session_id == sub_sid
+        assert pushed[0].content.get("text") == "sub reply"
 
     asyncio.run(scenario())

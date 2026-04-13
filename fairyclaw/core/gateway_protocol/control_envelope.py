@@ -4,6 +4,10 @@
 
 These payloads are channel-agnostic: the same JSON may appear in ``GatewayOutboundMessage``
 ``kind=event`` content or Web gateway WebSocket messages.
+
+Sub-agent streaming reuses the same push ``kind`` values as the main session; clients tell
+main vs child apart using ``body.session_id``. See ``GATEWAY_RUNTIME_PROTOCOL.md``
+(Sub-session push routing).
 """
 
 from __future__ import annotations
@@ -85,6 +89,8 @@ class SubagentTaskState:
     instruction: str | None = None
     child_session_id: str | None = None
     detail: str | None = None
+    event_count: int | None = None
+    last_event_at_ms: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return _drop_none(asdict(self))

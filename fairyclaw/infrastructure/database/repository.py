@@ -347,6 +347,18 @@ class EventRepository:
         rows = (await self.db.execute(stmt)).scalars().all()
         return list(reversed(rows))
 
+    async def session_event_stats(self, session_id: str) -> tuple[int, int | None]:
+        """Return persisted event count and last event time in ms for one session."""
+        stmt = select(func.count(EventModel.id), func.max(EventModel.timestamp)).where(
+            EventModel.session_id == session_id
+        )
+        row = (await self.db.execute(stmt)).one()
+        count = int(row[0] or 0)
+        ts = row[1]
+        if ts is None:
+            return count, None
+        return count, int(ts.timestamp() * 1000)
+
     async def usage_totals(
         self,
         *,

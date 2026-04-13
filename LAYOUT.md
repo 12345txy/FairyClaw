@@ -145,7 +145,7 @@ Bridge-protocol models shared between Business and Gateway.
 
 | File | Responsibility |
 |---|---|
-| `models.py` | `BridgeFrame`, all payload dataclasses (hello, session open, inbound, outbound, ack, file transfer). See [`docs/GATEWAY_ENVELOPE.md`](docs/GATEWAY_ENVELOPE.md) for the full protocol reference. |
+| `models.py` | `BridgeFrame`, all payload dataclasses (hello, session open, inbound, outbound, ack, file transfer). See [`docs/GATEWAY_ENVELOPE.md`](docs/GATEWAY_ENVELOPE.md) for the full protocol reference. Web push routing for sub-agent sessions (child `session_id`, parent fallback, `meta.fc_parent_session_id`) is specified in [`fairyclaw/core/gateway_protocol/GATEWAY_RUNTIME_PROTOCOL.md`](fairyclaw/core/gateway_protocol/GATEWAY_RUNTIME_PROTOCOL.md). |
 | `ingress.py` | `GatewayIngressService`: converts typed inbound frames into session history and runtime events. |
 | `files.py` | File upload/download service (business side). |
 

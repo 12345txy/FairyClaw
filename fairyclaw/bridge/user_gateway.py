@@ -70,7 +70,11 @@ from fairyclaw.core.gateway_protocol.models import (
     new_frame_id,
 )
 from fairyclaw.core.events.bus import SessionEventBus
-from fairyclaw.infrastructure.database.repository import FileRepository, GatewaySessionRouteRepository, SessionRepository
+from fairyclaw.infrastructure.database.repository import (
+    EventRepository,
+    GatewaySessionRouteRepository,
+    SessionRepository,
+)
 from fairyclaw.infrastructure.database.session import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
@@ -158,50 +162,27 @@ class UserGateway:
             await websocket.send_text(frame.to_json())
 
     async def emit_file(self, session_id: str, file_id: str) -> None:
-        """Deliver one stored file to the user channel (sub-session remap to parent when needed)."""
-        target_session_id = session_id
-        target_file_id = file_id
+        """Deliver one stored file to the user channel.
 
-        if not resolve_session_role_policy(session_id).can_callback_user:
-            async with AsyncSessionLocal() as db:
-                route_repo = GatewaySessionRouteRepository(db)
-                parent_session_id = await route_repo.get_parent_session_id(session_id)
-            if not parent_session_id:
-                logger.warning("emit_file: no parent route for sub-session=%s", session_id)
-                return
-            async with AsyncSessionLocal() as db:
-                file_repo = FileRepository(db)
-                cloned = await file_repo.clone_to_session(
-                    file_id=file_id,
-                    source_session_id=session_id,
-                    target_session_id=parent_session_id,
-                )
-            if cloned is None:
-                logger.error(
-                    "emit_file: clone failed, source=%s target=%s file_id=%s",
-                    session_id,
-                    parent_session_id,
-                    file_id,
-                )
-                return
-            target_session_id = parent_session_id
-            target_file_id = cloned.id
-
-        if not resolve_session_role_policy(target_session_id).can_callback_user:
-            logger.warning("emit_file: target session not deliverable: %s", target_session_id)
+        Main session: outbound uses that ``session_id``. Sub-session: outbound keeps the **child**
+        ``session_id`` and file id; the Web gateway delivers to parent-bound sockets (no file clone).
+        """
+        policy = resolve_session_role_policy(session_id)
+        if policy.can_callback_user:
+            await self.push_outbound(GatewayOutboundMessage.file(session_id=session_id, file_id=file_id))
             return
 
-        await self.push_outbound(
-            GatewayOutboundMessage.file(
-                session_id=target_session_id,
-                file_id=target_file_id,
-            )
-        )
+        async with AsyncSessionLocal() as db:
+            route_repo = GatewaySessionRouteRepository(db)
+            parent_session_id = await route_repo.get_parent_session_id(session_id)
+        if not parent_session_id:
+            logger.warning("emit_file: no parent route for sub-session=%s", session_id)
+            return
+
+        await self.push_outbound(GatewayOutboundMessage.file(session_id=session_id, file_id=file_id))
 
     async def emit_assistant_text(self, session_id: str, text: str) -> None:
-        """Push assistant text to the user channel (main session only)."""
-        if not resolve_session_role_policy(session_id).can_callback_user:
-            return
+        """Push assistant text to the user channel (main and sub-session; Web gateway routes sub-id pushes)."""
         t = text.strip()
         if not t:
             return
@@ -215,9 +196,7 @@ class UserGateway:
         tool_name: str,
         arguments_json: str,
     ) -> None:
-        """Notify gateway UI before tool execution."""
-        if not resolve_session_role_policy(session_id).can_callback_user:
-            return
+        """Notify gateway UI before tool execution (main and sub-session)."""
         arguments = parse_tool_arguments_json(arguments_json)
         env = ToolCallEnvelope(
             tool_call_id=tool_call_id,
@@ -233,9 +212,7 @@ class UserGateway:
         )
 
     async def emit_tool_result(self, session_id: str, tool_round: ToolCallRound) -> None:
-        """Notify gateway UI after tool execution."""
-        if not resolve_session_role_policy(session_id).can_callback_user:
-            return
+        """Notify gateway UI after tool execution (main and sub-session)."""
         err_msg = None if tool_round.success else (tool_round.tool_result or "error")
         res_env = ToolResultEnvelope(
             tool_call_id=tool_round.call_id,
@@ -282,11 +259,13 @@ class UserGateway:
         async with AsyncSessionLocal() as db:
             route_repo = GatewaySessionRouteRepository(db)
             sess_repo = SessionRepository(db)
+            event_repo = EventRepository(db)
             children = await route_repo.list_by_parent_session(parent_session_id)
             rows: list[SubagentTaskState] = []
             for ch in children:
                 sid = ch.session_id
                 model = await sess_repo.get(sid)
+                ev_count, last_ev_ms = await event_repo.session_event_stats(sid)
                 title = (model.title if model else None) or ""
                 updated = int(model.updated_at.timestamp() * 1000) if model else now_ms()
                 raw_meta = getattr(model, "meta", None) if model is not None else None
@@ -323,6 +302,8 @@ class UserGateway:
                         updated_at_ms=updated,
                         child_session_id=sid,
                         detail=(record.summary if record and record.summary else None),
+                        event_count=ev_count,
+                        last_event_at_ms=last_ev_ms,
                     )
                 )
         return [r.to_dict() for r in rows]

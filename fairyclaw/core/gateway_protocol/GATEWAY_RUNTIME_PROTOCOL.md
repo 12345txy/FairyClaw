@@ -13,7 +13,7 @@ Python module: `fairyclaw.core.gateway_protocol.control_envelope`.
 |------|---------|
 | `HeartbeatInfo` | `status`, `server_time_ms`, optional `message` |
 | `TelemetrySnapshot` | Monthly token usage + `heartbeat` + optional Reins fields |
-| `SubagentTaskState` | One row for background sub-agent tasks |
+| `SubagentTaskState` | One row for background sub-agent tasks (`event_count`, `last_event_at_ms` optional aggregates from persisted events) |
 | `MessagePreviewLine` | `role`, `text`, optional `ts_ms` |
 | `SessionSummary` | `session_id`, `title`, `updated_at_ms`, `preview_messages` |
 | `CapabilityGroupPolicy` | Skill group flags for planner visibility |
@@ -39,6 +39,21 @@ Python module: `fairyclaw.core.gateway_protocol.control_envelope`.
 - Server pushes assistant messages: `{ "op": "push", "body": { "session_id", "kind", "content", "meta" } }`. Besides `kind` `text` / `file`, the web adapter may push `kind` `event` with `content.event_type` (including `tool_call` / `tool_result` for tool lifecycle UI).
 - When `session_id` is the sentinel `__fc_broadcast__`, the gateway delivers the push to **every** connected web client (no `session.bind` required). Used for `event_type=telemetry` (`TelemetrySnapshot`).
 
+### Sub-session push routing (Web gateway)
+
+Browsers normally `session.bind` only the **main** (web) session id. Sub-agent runs under a **child** `session_id` (contains `_sub_` per server convention). Business still emits `GatewayOutboundMessage` with that **child** `session_id` for assistant text, tool lifecycle events, and file notifications.
+
+**Web `WebGatewayAdapter` behavior:**
+
+1. If there is at least one WebSocket subscribed to `body.session_id`, the push is delivered only to those subscribers (same as main session).
+2. If there are **no** subscribers for that id, the gateway loads `parent_session_id` from `GatewaySessionRouteModel` and delivers the **same** JSON to subscribers of the **parent** session id instead.
+3. **`body.session_id` stays the child session id** in both cases so the client can route UI: e.g. render in the subtask detail timeline when `body.session_id` equals the selected subtask’s `child_session_id`, and render in the main timeline when it equals the bound main session id.
+4. When delivery uses the parent fallback (step 2), the gateway sets **`meta.fc_parent_session_id`** to the parent session id string if not already present. Clients may ignore it if they already know the bind context.
+
+**`fc_*` meta:** Only **`fc_parent_session_id`** is defined for this flow; there is no `fc_mirrored_sub_session` flag.
+
+**Initial subtask history:** Use `sessions.history` with `session_id` set to the child id; response shape matches the main session. **Security note:** this build does **not** require that the Web client has bound the parent before reading a child history (single-tenant assumption: one user per deployment, protection is `FAIRYCLAW_API_TOKEN` / WebSocket `token`). Harden with bind checks if you share one deployment across users.
+
 ### Operations
 
 | `op` | `body` | `ack.body` |
@@ -56,7 +71,7 @@ Python module: `fairyclaw.core.gateway_protocol.control_envelope`.
 | `config.onebot.get` | `{}` | OneBot settings (Gateway-only) |
 | `config.onebot.put` | `{ ONEBOT_* fields }` | `{ "ok": true }` |
 | `sessions.list` | `{}` | `{ "sessions": [...] }` — Web gateway reads shared DB and returns **`platform == "web"`** sessions only (filter stays in Gateway adapter, not Business) |
-| `sessions.history` | `{ "session_id", "limit"? }` | `{ "session_id", "events": [...] }` — Business DB via Bridge `gateway_control` (`sessions.history`); each event is `session_event` (role, text, ts_ms) or `operation_event` (tool_name, result_preview, ts_ms) |
+| `sessions.history` | `{ "session_id", "limit"? }` | `{ "session_id", "events": [...] }` — Business DB via Bridge `gateway_control` (`sessions.history`); each event is `session_event` (role, text, ts_ms) or `operation_event` (tool_name, result_preview, ts_ms). Works for **child** sub-agent session ids as well as the main web session. |
 | `sessions.subagent_tasks` | `{ "session_id" }` | `{ "session_id", "tasks": [...] }` — Business runtime subtask snapshot for the main session (labels/status for running & terminal sub-agents) |
 | `sessions.usage` | `{ "session_id" }` | `{ "session_tokens_used", "session_prompt_tokens_used", "session_completion_tokens_used", "month_tokens_used", ... }` aggregated from persisted event usage fields |
 | `capabilities.list` | `{}` | `{ "groups": [...] }` |
