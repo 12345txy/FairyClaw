@@ -74,6 +74,10 @@ def setup_logging() -> None:
     logging.getLogger("multipart").setLevel(logging.WARNING)
     logging.getLogger("python_multipart").setLevel(logging.WARNING)
     logging.getLogger("python_multipart.multipart").setLevel(logging.WARNING)
+    # Avoid per-frame noise when FAIRYCLAW_LOG_LEVEL=DEBUG (heartbeats, pings).
+    logging.getLogger("websockets").setLevel(logging.WARNING)
+    logging.getLogger("websockets.client").setLevel(logging.WARNING)
+    logging.getLogger("websockets.server").setLevel(logging.WARNING)
     fairyclaw_logger = logging.getLogger("fairyclaw")
     fairyclaw_logger.setLevel(level)
     for handler in root.handlers:

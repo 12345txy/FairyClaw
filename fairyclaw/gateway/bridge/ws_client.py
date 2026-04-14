@@ -416,9 +416,9 @@ class WsBridgeClient:
             return
 
         if frame.type == FRAME_HEARTBEAT:
-            await self._send_frame(
-                BridgeFrame(type=FRAME_HEARTBEAT, payload=frame.payload, id=new_frame_id("hb")),
-            )
+            # Business echoes our periodic ping; do **not** send another heartbeat back or we
+            # get a tight ping-pong loop (dozens+ frames/sec). Liveness is: we send on a timer,
+            # peer echoes once — that is sufficient.
             return
 
     async def _dispatch_outbound_and_ack(self, frame: BridgeFrame) -> None:
@@ -455,8 +455,9 @@ class WsBridgeClient:
 
     async def _heartbeat_loop(self) -> None:
         seq = 0
+        interval = max(5, int(settings.bridge_heartbeat_interval_seconds))
         while True:
-            await asyncio.sleep(10)
+            await asyncio.sleep(float(interval))
             seq += 1
             await self._send_frame(
                 BridgeFrame(type=FRAME_HEARTBEAT, payload={"seq": seq}, id=new_frame_id("hb")),

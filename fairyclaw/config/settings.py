@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     gateway_id: str = "gw_local"
     gateway_bridge_url: str = "ws://127.0.0.1:16000/internal/gateway/ws"
     gateway_reconnect_seconds: float = 1.0
+    #: Gateway→Business bridge application heartbeat (seconds). Keep modest (e.g. 30–60);
+    #: RFC 6455 WebSocket pings are separate; this is for process-level liveness on the bridge.
+    bridge_heartbeat_interval_seconds: int = 30
     # OneBot: read from same env files as FAIRYCLAW_*; supports unprefixed ONEBOT_* (not visible to raw os.getenv).
     onebot_session_cmd_prefix: str = Field(
         default="/sess",
