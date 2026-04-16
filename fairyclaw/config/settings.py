@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     event_bus_worker_count: int = 2
     planner_heartbeat_seconds: int = 15
     planner_wakeup_debounce_ms: int = 200
+    system_prompt_language: str = "en"
     router_profile_name: str = "router"
     sqlite_busy_timeout_seconds: float = 8.0
     db_write_retry_attempts: int = 3
@@ -81,6 +82,14 @@ class Settings(BaseSettings):
     def absolutize_sqlite_url(cls, v: str) -> str:
         anchor = locations.path_anchor()
         return normalize_database_url_value(v, anchor)
+
+    @field_validator("system_prompt_language", mode="after")
+    @classmethod
+    def normalize_system_prompt_language(cls, v: str) -> str:
+        value = str(v or "").strip().lower()
+        if value == "zh":
+            return "zh"
+        return "en"
 
     @field_validator("llm_endpoints_config_path", "capabilities_dir", "log_file_path", "data_dir", "filesystem_root_dir")
     @classmethod

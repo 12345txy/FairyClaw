@@ -79,7 +79,7 @@ def _build_file_block(cfg: SessionMemoryRuntimeConfig) -> str:
         parts.append(f"[{name}]\n{snippet}\n[/{name}]")
     if not parts:
         return ""
-    return "[MemoryFiles]\n" + "\n\n".join(parts) + "\n[/MemoryFiles]"
+    return "[MemoryFilesContext]\n" + "\n\n".join(parts) + "\n[/MemoryFilesContext]"
 
 
 async def _build_gap_repair_patch(
@@ -112,7 +112,7 @@ async def _build_gap_repair_patch(
         append_memory_text(name="MEMORY.md", content=patch, memory_root=cfg.memory_root)
     except Exception as exc:
         logger.debug("gap repair append skipped: %s", exc)
-    return f"[GapRepair]\n{summary}\n[/GapRepair]"
+    return f"[GapRepairContext]\n{summary}\n[/GapRepairContext]"
 
 
 async def _summarize_history_slice(*, slice_items: list[ChatHistoryItem], cfg: SessionMemoryRuntimeConfig) -> str:

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from fairyclaw.config.settings import settings
 from fairyclaw.core.agent.constants import SUB_SESSION_MARKER
 from fairyclaw.core.domain import ContentSegment
 from fairyclaw.core.agent.hooks.protocol import LlmChatMessage
@@ -29,7 +30,11 @@ class TurnContextBuilder:
     ) -> tuple[list[LlmChatMessage], list[ChatHistoryItem], UserTurn | None]:
         """Build typed LLM messages plus typed history/user IR for one turn."""
         nesting_depth = session_id.count(SUB_SESSION_MARKER)
-        system_prompt = build_system_prompt(nesting_depth=nesting_depth, task_type=task_type)
+        system_prompt = build_system_prompt(
+            nesting_depth=nesting_depth,
+            task_type=task_type,
+            prompt_language=settings.system_prompt_language,
+        )
         history_entries, user_entry = self._split_current_user_turn(
             history_items=list(history_items),
             explicit_user_turn=UserTurn.from_segments(user_segments),

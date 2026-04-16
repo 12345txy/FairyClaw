@@ -31,10 +31,6 @@ async def execute_hook(
     state["since_tokens"] += TokenCounter(model="gpt-4").count_text(transcript)
     state["since_tool_rounds"] += len(payload.tool_calls)
 
-    heuristic_entries = _heuristic_extract(transcript)
-    for line in heuristic_entries:
-        append_memory_text(name="MEMORY.md", content=line, memory_root=cfg.memory_root)
-
     should_trigger = _should_trigger_llm(state=state, cfg=cfg)
     if should_trigger:
         plan = await _run_agentic_search_and_memory_retrieval(transcript=transcript, cfg=cfg)
@@ -67,15 +63,6 @@ def _build_transcript(payload: AfterLlmResponseHookPayload) -> str:
     for call in payload.tool_calls:
         lines.append(f"tool_call: {call.name} args={call.arguments_json}")
     return "\n".join(lines)
-
-
-def _heuristic_extract(transcript: str) -> list[str]:
-    out: list[str] = []
-    if "http://" in transcript or "https://" in transcript:
-        out.append(f"- discovered_url: {transcript[:240]}")
-    if "/" in transcript:
-        out.append(f"- discovered_path_or_marker: {transcript[:240]}")
-    return out
 
 
 def _load_checkpoint_state(cfg: SessionMemoryRuntimeConfig) -> dict[str, int]:
