@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 FairyClaw contributors, PKU DS Lab
+#
+# Build fairyclaw and upload the current pyproject.toml version to PyPI.
+# Flow mirrors scripts/publish_testpypi.sh (without TestPyPI).
+#
+# Required repository secret: PYPI_TOKEN (PyPI API token; use username __token__).
+# https://pypi.org/manage/account/token/
+
+name: Publish to PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      with_web:
+        description: Run npm build in web/ and scripts/prepare_web_dist.py before packaging
+        type: boolean
+        required: false
+        default: false
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node (for optional web build)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.with_web == true }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Parse version from pyproject.toml
+        id: version
+        run: |
+          VERSION="$(grep -E '^version[[:space:]]*=' pyproject.toml | head -1 | sed -E 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/')"
+          if [[ -z "${VERSION}" ]]; then
+            echo "Could not parse version from pyproject.toml" >&2
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Publishing fairyclaw ${VERSION} to PyPI"
+
+      - name: Build web assets (optional)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.with_web == true }}
+        run: |
+          set -euo pipefail
+          (cd web && npm ci --no-progress && npm run build -- --logLevel warn)
+          python scripts/prepare_web_dist.py
+
+      - name: Clean and build sdist/wheel
+        run: |
+          set -euo pipefail
+          rm -rf dist build
+          mkdir -p dist
+          python -m build
+
+      - name: Twine check
+        run: python -m twine check dist/*
+
+      - name: Upload to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          shopt -s nullglob
+          ARTIFACTS=(dist/fairyclaw-"${VERSION}"*.whl dist/fairyclaw-"${VERSION}"*.tar.gz)
+          if [[ ${#ARTIFACTS[@]} -eq 0 ]]; then
+            echo "No artifacts matching dist/fairyclaw-${VERSION}*" >&2
+            ls -la dist/ >&2 || true
+            exit 1
+          fi
+          printf 'Uploading:\n'
+          printf '  %s\n' "${ARTIFACTS[@]}"
+          python -m twine upload "${ARTIFACTS[@]}"
