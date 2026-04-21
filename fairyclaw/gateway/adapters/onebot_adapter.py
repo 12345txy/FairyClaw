@@ -240,7 +240,7 @@ class OneBotGatewayAdapter(GatewayAdapter):
             route = await route_repo.get_for_onebot_sender(session_id=raw, sender_ref=sender_ref)
             if route is not None:
                 return raw, None
-            return None, f"会话不存在或不属于当前发送者: {raw}"
+            return None, f"Session does not exist or is not owned by the current sender: {raw}"
 
         items = await route_repo.list_sessions_for_onebot_sender(sender_ref=sender_ref)
         key = raw.lower()
@@ -249,7 +249,7 @@ class OneBotGatewayAdapter(GatewayAdapter):
             return exact[0].session_id, None
         if len(exact) > 1:
             ids = ", ".join(it.session_id for it in exact[:5])
-            return None, f"标题重复，请用 session_id 指定: {ids}"
+            return None, f"Duplicate session title. Please specify session_id: {ids}"
 
         prefix_hits = [
             it for it in items if (it.title or "").strip() and (it.title or "").strip().lower().startswith(key)
@@ -257,9 +257,9 @@ class OneBotGatewayAdapter(GatewayAdapter):
         if len(prefix_hits) == 1:
             return prefix_hits[0].session_id, None
         if len(prefix_hits) > 1:
-            return None, "多个会话标题以该前缀开头，请用更完整的名称或 session_id。"
+            return None, "Multiple session titles share this prefix; use a more specific title or session_id."
 
-        return None, f"未找到会话: {raw}"
+        return None, f"Session not found: {raw}"
 
     async def _handle_management_command(
         self,
@@ -296,7 +296,7 @@ class OneBotGatewayAdapter(GatewayAdapter):
             await self._send_onebot_message(
                 user_id=user_id,
                 group_id=group_id,
-                message=f"已创建新会话并切换到: {session_id}",
+                message=f"Created and switched to new session: {session_id}",
             )
             return True
         if command == "ls":
@@ -309,9 +309,9 @@ class OneBotGatewayAdapter(GatewayAdapter):
                     user_id=user_id,
                     group_id=group_id,
                     message=(
-                        f"用法: {self.onebot_session_cmd_prefix} checkout <session_id 或 标题>\n"
-                        f"示例: {self.onebot_session_cmd_prefix} checkout sess_abc...\n"
-                        f"或: {self.onebot_session_cmd_prefix} checkout 我的工作"
+                        f"Usage: {self.onebot_session_cmd_prefix} checkout <session_id or title>\n"
+                        f"Example: {self.onebot_session_cmd_prefix} checkout sess_abc...\n"
+                        f"Or: {self.onebot_session_cmd_prefix} checkout My Work"
                     ),
                 )
                 return True
@@ -326,7 +326,7 @@ class OneBotGatewayAdapter(GatewayAdapter):
                 await self._send_onebot_message(
                     user_id=user_id,
                     group_id=group_id,
-                    message=err or "无法解析会话",
+                    message=err or "Failed to resolve session",
                 )
                 return True
             await self.session_store.set_active_session_id(
@@ -337,7 +337,7 @@ class OneBotGatewayAdapter(GatewayAdapter):
             await self._send_onebot_message(
                 user_id=user_id,
                 group_id=group_id,
-                message=f"已切换到会话: {target_session_id}",
+                message=f"Switched to session: {target_session_id}",
             )
             return True
         if command == "rm":
@@ -346,8 +346,8 @@ class OneBotGatewayAdapter(GatewayAdapter):
                     user_id=user_id,
                     group_id=group_id,
                     message=(
-                        f"用法: {self.onebot_session_cmd_prefix} rm <session_id 或 标题>\n"
-                        "将永久删除该会话及其消息与文件。"
+                        f"Usage: {self.onebot_session_cmd_prefix} rm <session_id or title>\n"
+                        "This permanently deletes the session and all its messages/files."
                     ),
                 )
                 return True
@@ -362,7 +362,7 @@ class OneBotGatewayAdapter(GatewayAdapter):
                     await self._send_onebot_message(
                         user_id=user_id,
                         group_id=group_id,
-                        message=err or "无法解析会话",
+                        message=err or "Failed to resolve session",
                     )
                     return True
                 active = await self.session_store.get_active_session_id(
@@ -380,13 +380,13 @@ class OneBotGatewayAdapter(GatewayAdapter):
                 await self._send_onebot_message(
                     user_id=user_id,
                     group_id=group_id,
-                    message=f"删除失败（会话可能已不存在）: {target_session_id}",
+                    message=f"Delete failed (session may not exist): {target_session_id}",
                 )
                 return True
             await self._send_onebot_message(
                 user_id=user_id,
                 group_id=group_id,
-                message=f"已删除会话: {target_session_id}",
+                message=f"Deleted session: {target_session_id}",
             )
             return True
         await self._send_onebot_message(
@@ -405,27 +405,27 @@ class OneBotGatewayAdapter(GatewayAdapter):
             route_repo = GatewaySessionRouteRepository(db)
             items = await route_repo.list_sessions_for_onebot_sender(sender_ref=sender_ref)
         if not items:
-            return "当前没有可切换的会话。"
-        lines = ["会话列表:"]
+            return "No switchable sessions are available."
+        lines = ["Session list:"]
         for item in items[:20]:
             marker = "* " if item.session_id == active_session_id else "  "
             timestamp = item.updated_at.strftime("%Y-%m-%d %H:%M:%S") if item.updated_at else "-"
             title = item.title or "(untitled)"
             lines.append(f"{marker}{item.session_id} | {title} | {timestamp}")
         if len(items) > 20:
-            lines.append(f"... 共 {len(items)} 个会话，仅显示前 20 个")
+            lines.append(f"... {len(items)} sessions total, showing first 20 only")
         return "\n".join(lines)
 
     def _management_help_text(self) -> str:
         prefix = self.onebot_session_cmd_prefix
         return "\n".join(
             [
-                "会话管理指令:",
-                f"{prefix} new [标题]",
+                "Session management commands:",
+                f"{prefix} new [title]",
                 f"{prefix} ls",
-                f"{prefix} checkout <session_id 或 标题>",
-                f"{prefix} co <session_id 或 标题>",
-                f"{prefix} rm <session_id 或 标题>  （永久删除该会话）",
+                f"{prefix} checkout <session_id or title>",
+                f"{prefix} co <session_id or title>",
+                f"{prefix} rm <session_id or title>  (permanently deletes the session)",
             ]
         )
 
@@ -531,7 +531,7 @@ class OneBotGatewayAdapter(GatewayAdapter):
                 raise RuntimeError("Missing file_id in outbound file payload")
             content, filename, _ = await self.runtime.download_file(session_id=outbound.session_id, file_id=file_id)
             message = [
-                {"type": "text", "data": {"text": f"收到文件: {filename or file_id}\n"}},
+                {"type": "text", "data": {"text": f"Received file: {filename or file_id}\n"}},
                 {
                     "type": "file",
                     "data": {

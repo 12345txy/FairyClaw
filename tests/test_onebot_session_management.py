@@ -311,7 +311,7 @@ def test_onebot_rm_resolves_by_title_and_deletes_session(monkeypatch) -> None:
 
         assert deleted_ids == ["sess_rm"]
         assert cleared == [True]
-        assert "已删除" in sent_messages[0]
+        assert "Deleted session" in sent_messages[0]
 
     asyncio.run(scenario())
 

@@ -13,6 +13,7 @@ def test_planner_prompt_includes_memory_tool_policy() -> None:
 
 def test_prompt_language_switches_to_chinese() -> None:
     prompt = system_prompts.build_system_prompt(nesting_depth=0, task_type="general", prompt_language="zh")
+    assert "RoleIdentity" in prompt
     assert "你是 FairyClaw" in prompt
     assert "[RoleIdentity]" in prompt
 

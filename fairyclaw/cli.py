@@ -762,7 +762,7 @@ async def _ws_request_async(ws_url: str, token: str, op: str, body: dict[str, An
     except RuntimeError:
         raise
     except Exception as exc:
-        raise RuntimeError("Gateway not reachable. 请先执行 `fairyclaw start`。") from exc
+        raise RuntimeError("Gateway not reachable. Run `fairyclaw start` first.") from exc
 
 
 def _ws_request(config_values: dict[str, str], op: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -809,10 +809,10 @@ def _cmd_help(_args: argparse.Namespace, parser: argparse.ArgumentParser) -> int
     print("  fairyclaw session rm <session_name_or_id>")
     print("")
     print("Notes:")
-    print("  - 需要先执行 `fairyclaw start`。")
-    print("  - --session 同名会复用同一会话；不带 --session 会新建匿名会话。")
-    print("  - --workspace 仅在新建会话时生效；复用已有会话时会被忽略。")
-    print("  - session name 映射保存到 <FAIRYCLAW_DATA_DIR>/cli_session_map.json。")
+    print("  - Run `fairyclaw start` first.")
+    print("  - Same --session name reuses the session; omit --session to create an anonymous session.")
+    print("  - --workspace only applies when creating a new session; it is ignored for reused sessions.")
+    print("  - Session-name mappings are stored in <FAIRYCLAW_DATA_DIR>/cli_session_map.json.")
     print("")
     parser.print_help()
     return 0

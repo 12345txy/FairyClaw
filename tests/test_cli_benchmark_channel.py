@@ -131,7 +131,7 @@ def test_send_fails_when_gateway_not_started(tmp_path: Path, monkeypatch: pytest
     monkeypatch.setattr(cli, "_prepare_project_config", lambda no_sync_config: _stub_prepare(tmp_path))
 
     def fake_ws(_cfg: dict[str, str], _op: str, _body: dict) -> dict:
-        raise RuntimeError("Gateway not reachable. 请先执行 `fairyclaw start`。")
+        raise RuntimeError("Gateway not reachable. Run `fairyclaw start` first.")
 
     monkeypatch.setattr(cli, "_ws_request", fake_ws)
     with pytest.raises(RuntimeError, match="fairyclaw start"):
@@ -146,7 +146,7 @@ def test_main_send_reports_friendly_error_without_traceback(
     monkeypatch.setattr(cli, "_prepare_project_config", lambda no_sync_config: _stub_prepare(tmp_path))
 
     def fake_ws(_cfg: dict[str, str], _op: str, _body: dict) -> dict:
-        raise RuntimeError("Gateway not reachable. 请先执行 `fairyclaw start`。")
+        raise RuntimeError("Gateway not reachable. Run `fairyclaw start` first.")
 
     monkeypatch.setattr(cli, "_ws_request", fake_ws)
     monkeypatch.setattr("sys.argv", ["fairyclaw", "send", "hello"])
