@@ -28,6 +28,7 @@ def test_cmd_help_prints_benchmark_commands(capsys: pytest.CaptureFixture[str]) 
     out = capsys.readouterr().out
     assert "fairyclaw help" in out
     assert "fairyclaw send <text>" in out
+    assert "--workspace <path>" in out
     assert "fairyclaw session list" in out
 
 

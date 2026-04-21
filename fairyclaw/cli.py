@@ -803,7 +803,7 @@ def _format_history_rows(events: list[dict[str, Any]]) -> list[str]:
 def _cmd_help(_args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     print("FairyClaw benchmark CLI commands:")
     print("  fairyclaw help")
-    print("  fairyclaw send <text> [--session <name>]")
+    print("  fairyclaw send <text> [--session <name>] [--workspace <path>]")
     print("  fairyclaw get <session_name_or_id>")
     print("  fairyclaw session list")
     print("  fairyclaw session rm <session_name_or_id>")
@@ -811,6 +811,7 @@ def _cmd_help(_args: argparse.Namespace, parser: argparse.ArgumentParser) -> int
     print("Notes:")
     print("  - 需要先执行 `fairyclaw start`。")
     print("  - --session 同名会复用同一会话；不带 --session 会新建匿名会话。")
+    print("  - --workspace 仅在新建会话时生效；复用已有会话时会被忽略。")
     print("  - session name 映射保存到 <FAIRYCLAW_DATA_DIR>/cli_session_map.json。")
     print("")
     parser.print_help()
