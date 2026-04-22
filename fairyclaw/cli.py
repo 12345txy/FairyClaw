@@ -949,6 +949,13 @@ def _start(args: argparse.Namespace) -> int:
         if key and value and key not in env:
             env[key] = value
 
+    # Ensure Gateway serves the latest local build when source tree has web/dist.
+    # Otherwise resolve_web_dist_dir() may pick packaged fairyclaw/web_dist first.
+    if web_dir is not None:
+        local_web_dist = (web_dir / "dist").resolve()
+        if (local_web_dist / "index.html").is_file():
+            env["FAIRYCLAW_WEB_DIST_DIR"] = str(local_web_dist)
+
     # Pin paths to project config/ and data/ so merges from fairyclaw.env cannot point elsewhere.
     data_resolved = data_dir.resolve()
     llm_resolved = (config_dir / "llm_endpoints.yaml").resolve()

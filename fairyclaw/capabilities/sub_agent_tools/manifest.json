@@ -3,6 +3,7 @@
   "description": "Tools available only to sub-agent sessions for reporting terminal task outcomes.",
   "always_enable_planner": false,
   "always_enable_subagent": true,
+  "manifest_version": "1.1",
   "capabilities": [
     {
       "name": "report_subtask_done",
@@ -36,6 +37,28 @@
       },
       "script": "report_subtask_done.py",
       "record_event": true
+    }
+  ],
+  "hooks": [
+    {
+      "name": "deliverable_contract_after_llm_response_sub",
+      "stage": "after_llm_response",
+      "script": "dc_after_llm_response.py",
+      "priority": 10,
+      "enabled": true,
+      "timeout_ms": 3000,
+      "on_error": "continue",
+      "config": {}
+    },
+    {
+      "name": "deliverable_contract_before_tool_call_sub",
+      "stage": "before_tool_call",
+      "script": "dc_before_tool_call.py",
+      "priority": 10,
+      "enabled": true,
+      "timeout_ms": 3000,
+      "on_error": "continue",
+      "config": {}
     }
   ]
 }

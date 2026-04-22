@@ -210,13 +210,14 @@ class RuntimeSessionScheduler:
             state.wakeup_queued = False
             if state.inflight:
                 return
-            if not state.has_mailbox_events():
+            allow_empty_mailbox = wakeup_source not in {"event_bus", "heartbeat_watchdog", "debounce_timer", "subtask_completed"}
+            if not state.has_mailbox_events() and not allow_empty_mailbox:
                 return
-            if not state.has_triggerable_mailbox_events():
+            if state.has_mailbox_events() and not state.has_triggerable_mailbox_events():
                 state.touch()
                 return
             state.inflight = True
-            consumed_events = state.consume_mailbox()
+            consumed_events = state.consume_mailbox() if state.has_mailbox_events() else []
         task_type, enabled_groups = self.resolve_runtime_preferences(consumed_events)
         is_sub_session = SUB_SESSION_MARKER in session_id
         if is_sub_session:
@@ -323,6 +324,29 @@ class RuntimeSessionScheduler:
     async def _handle_user_message(self, event: RuntimeEvent) -> None:
         parsed = UserMessageReceivedEventPayload.from_runtime_event(event)
         trigger_turn = parsed.trigger_turn
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        internal_user_text = payload.get("internal_user_text")
+        if isinstance(internal_user_text, str) and internal_user_text.strip():
+            try:
+                async with AsyncSessionLocal() as db:
+                    from fairyclaw.core.agent.context.history_ir import SessionMessageBlock, SessionMessageRole
+                    from fairyclaw.core.agent.session.memory import PersistentMemory
+                    from fairyclaw.core.domain import ContentSegment
+                    from fairyclaw.infrastructure.database.repository import EventRepository
+
+                    memory = PersistentMemory(EventRepository(db))
+                    msg = SessionMessageBlock.from_segments(
+                        SessionMessageRole.USER,
+                        (ContentSegment.text_segment(internal_user_text.strip()),),
+                    )
+                    if msg is not None:
+                        await memory.add_session_event(session_id=event.session_id, message=msg)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to persist internal_user_text into session history: session=%s error=%s",
+                    event.session_id,
+                    exc,
+                )
         schedule_debounce = False
         async with self.state_lock:
             state = self.get_or_create_state(event.session_id)

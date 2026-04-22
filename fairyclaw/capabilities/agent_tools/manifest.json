@@ -3,6 +3,7 @@
   "description": "Tools for managing sub-agents and complex tasks. Use these tools to delegate work, manage long contexts, and perform parallel operations.",
   "always_enable_planner": true,
   "always_enable_subagent": false,
+  "manifest_version": "1.1",
   "capabilities": [
     {
       "name": "delegate_task",
@@ -29,6 +30,32 @@
               "type": "array",
               "items": { "type": "string" },
               "description": "REQUIRED when you need the sub-agent to see files: each string must be (1) a session file_id from send_file — copy the FULL id exactly (normally `file_` plus 32 hex characters; do not truncate or paraphrase), OR (2) an absolute filesystem path readable by the server, OR (3) an http(s) URL. FORBIDDEN: do not list `image`, `general`, `code`, or any `task_type` value here — those belong only in `task_type`. Omit this array or leave empty if no files to pass."
+            },
+            "done_when": {
+              "type": "array",
+              "description": "Optional deliverable contract rules checked before a sub-task can finish.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "file_exists",
+                      "json_parseable",
+                      "json_schema",
+                      "command_exit_code",
+                      "text_contains",
+                      "text_not_contains"
+                    ]
+                  },
+                  "args": {
+                    "type": "object",
+                    "description": "Arguments validated by rule type."
+                  }
+                },
+                "required": ["type", "args"],
+                "additionalProperties": false
+              }
             }
           },
           "required": ["instruction"]

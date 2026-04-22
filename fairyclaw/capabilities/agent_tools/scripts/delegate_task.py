@@ -21,6 +21,8 @@ from fairyclaw.infrastructure.database.models import FileModel, GatewaySessionRo
 from fairyclaw.infrastructure.database.repository import EventRepository, FileRepository
 from fairyclaw.infrastructure.database.session import AsyncSessionLocal
 
+from .dc_contract import validate_done_when
+
 logger = logging.getLogger(__name__)
 
 # New uploads use file_ + 12 hex; legacy may be up to 32. Reject `file_id_…` and other garbage.
@@ -122,12 +124,17 @@ async def execute(args: Dict[str, Any], context: ToolContext) -> str:
     instruction = str(args.get("instruction") or "")
     background = args.get("background", "")
     task_type = args.get("task_type", "general")
+    done_when_raw = args.get("done_when")
     raw_attachments = args.get("attachments", [])
     if not isinstance(raw_attachments, list):
         raw_attachments = []
     attachments = [str(a).strip() for a in raw_attachments if str(a).strip()]
     if not instruction:
         return "Error: instruction is required."
+    done_when_check = validate_done_when(done_when_raw)
+    if not done_when_check.ok:
+        return f"Error: invalid done_when: {done_when_check.error}"
+    done_when = list(done_when_check.done_when or [])
 
     if not context.planner:
         return "Error: Planner instance not available in context. Cannot spawn sub-agent."
@@ -173,6 +180,13 @@ async def execute(args: Dict[str, Any], context: ToolContext) -> str:
                     "task_type": str(task_type),
                     "instruction": instruction,
                     "subtask_status": f"running:{task_type}",
+                    "done_when": done_when,
+                    "dc_state": {
+                        "false_finish_count": 0,
+                        "last_status": "initialized",
+                        "last_failed_rules": [],
+                        "last_checked_at_ms": int(time.time() * 1000),
+                    },
                 },
             )
             local_db.add(sub_session_model)

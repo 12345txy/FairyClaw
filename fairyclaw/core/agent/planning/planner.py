@@ -130,6 +130,15 @@ class Planner(BasePlanner):
                 is_sub_session=policy.kind is SessionKind.SUB,
             )
             if turn_result.force_finish is not None:
+                if turn_result.message_text:
+                    await self._handle_text_fallback(
+                        request.session_id,
+                        turn_result.message_text,
+                        request.memory,
+                        usage_prompt_tokens=turn_result.usage_prompt_tokens,
+                        usage_completion_tokens=turn_result.usage_completion_tokens,
+                        usage_total_tokens=turn_result.usage_total_tokens,
+                    )
                 return
             if not turn_result.tool_calls:
                 await policy.handle_text_response(
