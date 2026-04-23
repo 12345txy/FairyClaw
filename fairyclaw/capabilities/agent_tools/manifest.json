@@ -49,8 +49,75 @@
                     ]
                   },
                   "args": {
-                    "type": "object",
-                    "description": "Arguments validated by rule type."
+                    "description": "Rule arguments. Match the selected `type` exactly. Use one of the schemas below.",
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "description": "For `file_exists` and `json_parseable`.",
+                        "properties": {
+                          "path": {
+                            "type": "string",
+                            "description": "Absolute path, or workspace-relative path to target file."
+                          }
+                        },
+                        "required": ["path"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "description": "For `json_schema`.",
+                        "properties": {
+                          "path": {
+                            "type": "string",
+                            "description": "Target JSON file path."
+                          },
+                          "schema": {
+                            "type": "object",
+                            "description": "Inline minimal JSON schema object."
+                          },
+                          "schema_path": {
+                            "type": "string",
+                            "description": "Path to schema JSON file. Provide either `schema` or `schema_path`."
+                          }
+                        },
+                        "required": ["path"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "description": "For `command_exit_code`.",
+                        "properties": {
+                          "command": {
+                            "type": "string",
+                            "description": "Command to run in workspace for verification."
+                          },
+                          "exit_code": {
+                            "type": "integer",
+                            "description": "Expected exit code. Default is 0 when omitted."
+                          }
+                        },
+                        "required": ["command"],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "description": "For `text_contains` and `text_not_contains`.",
+                        "properties": {
+                          "path": {
+                            "type": "string",
+                            "description": "Target text file path."
+                          },
+                          "terms": {
+                            "type": "array",
+                            "description": "Required/forbidden text snippets.",
+                            "items": { "type": "string" },
+                            "minItems": 1
+                          }
+                        },
+                        "required": ["path", "terms"],
+                        "additionalProperties": false
+                      }
+                    ]
                   }
                 },
                 "required": ["type", "args"],
