@@ -25,6 +25,7 @@ from fairyclaw.config.locations import (
     resolve_config_dir,
     resolve_capabilities_seed_dir,
 )
+from fairyclaw.bench_clawbench import run_clawbench_benchmark
 from fairyclaw.core.gateway_protocol.models import new_frame_id
 from fairyclaw.paths import package_dir
 
@@ -682,6 +683,19 @@ def _read_token(config_values: dict[str, str]) -> str:
     return os.getenv("FAIRYCLAW_API_TOKEN") or config_values.get("FAIRYCLAW_API_TOKEN", "sk-fairyclaw-dev-token")
 
 
+def _pin_cli_project_env(project_root: Path, config_dir: Path, config_values: dict[str, str]) -> None:
+    """Apply project config data paths to the process env before loading DB (``fairyclaw agent``)."""
+    data_resolved = _resolve_data_dir(project_root, config_values).resolve()
+    os.environ["FAIRYCLAW_DATA_DIR"] = str(data_resolved)
+    os.environ["FAIRYCLAW_LLM_ENDPOINTS_CONFIG_PATH"] = str((config_dir / "llm_endpoints.yaml").resolve())
+    if "FAIRYCLAW_DATABASE_URL" not in os.environ:
+        os.environ["FAIRYCLAW_DATABASE_URL"] = f"sqlite+aiosqlite:///{data_resolved / 'fairyclaw.db'}"
+    if "FAIRYCLAW_LOG_FILE_PATH" not in os.environ:
+        os.environ["FAIRYCLAW_LOG_FILE_PATH"] = str(data_resolved / "logs" / "fairyclaw.log")
+    cap_dest = capabilities_dir_from_env_values(project_root.resolve(), config_values)
+    os.environ["FAIRYCLAW_CAPABILITIES_DIR"] = str(cap_dest)
+
+
 def _resolve_data_dir(project_root: Path, config_values: dict[str, str]) -> Path:
     raw = (
         os.getenv("FAIRYCLAW_DATA_DIR")
@@ -804,12 +818,14 @@ def _cmd_help(_args: argparse.Namespace, parser: argparse.ArgumentParser) -> int
     print("FairyClaw benchmark CLI commands:")
     print("  fairyclaw help")
     print("  fairyclaw send <text> [--session <name>]")
+    print("  fairyclaw agent --session <name> --message '...'   # 单进程，无需 `start`（Moltis 式）")
+    print("  fairyclaw bench run --session <name> <text>...   # 需已 `fairyclaw start`")
     print("  fairyclaw get <session_name_or_id>")
     print("  fairyclaw session list")
     print("  fairyclaw session rm <session_name_or_id>")
     print("")
     print("Notes:")
-    print("  - 需要先执行 `fairyclaw start`。")
+    print("  - `send` / `bench` / `get` 需先 `fairyclaw start`；评测可单独用 `fairyclaw agent`。")
     print("  - --session 同名会复用同一会话；不带 --session 会新建匿名会话。")
     print("  - session name 映射保存到 <FAIRYCLAW_DATA_DIR>/cli_session_map.json。")
     print("")
@@ -860,6 +876,108 @@ def _cmd_send(args: argparse.Namespace) -> int:
     )
     print(json.dumps({"session_id": target_sid, "status": ack.get("status"), "message": ack.get("message")}, ensure_ascii=False))
     return 0
+
+
+def _cmd_bench_run(args: argparse.Namespace) -> int:
+    """Send one user message and block until session history is stable (for ClawBench v2)."""
+    project_root, _config_dir, config_values = _prepare_project_config(no_sync_config=True)
+    data_dir = _resolve_data_dir(project_root, config_values)
+    map_path = _cli_session_map_path(data_dir)
+    mapping = _load_cli_session_map(map_path)
+
+    session_name = (args.session or "").strip()
+    if not session_name:
+        raise RuntimeError("bench run requires --session <name> (use a stable id, e.g. ClawBench session_id)")
+
+    existing = mapping.get(session_name)
+    if existing:
+        target_sid = existing
+    else:
+        created = _ws_request(
+            config_values,
+            "session.create",
+            {
+                "platform": "web",
+                "title": session_name,
+                "meta": {"source": "clawbenchv2", "cli": "bench_run"},
+            },
+        )
+        target_sid = str(created.get("session_id") or "").strip()
+        if not target_sid:
+            raise RuntimeError("session.create succeeded but no session_id returned")
+        mapping[session_name] = target_sid
+        _save_cli_session_map(map_path, mapping)
+
+    text = " ".join(args.text).strip()
+    if not text:
+        raise RuntimeError("message text is required")
+
+    ack = _ws_request(
+        config_values,
+        "chat.send",
+        {"session_id": target_sid, "segments": [{"type": "text", "content": text}]},
+    )
+    if str(ack.get("status") or "").lower() in {"error", "failed"}:
+        raise RuntimeError(f"chat.send rejected: {ack!r}")
+
+    def _ws(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        return _ws_request(config_values, op, body)
+
+    result = run_clawbench_benchmark(
+        ws_request=_ws,
+        session_id=target_sid,
+        timeout_sec=float(args.timeout),
+        idle_sec=float(args.idle_seconds),
+        poll_interval_sec=float(args.poll_interval),
+        min_wait_after_send_sec=float(args.min_wait_after_send),
+    )
+    out = {
+        "bench": "clawbenchv2",
+        "send_ack": ack,
+        **result,
+    }
+    print(json.dumps(out, ensure_ascii=False), flush=True)
+    return 0 if result.get("ok") else 1
+
+
+def _cmd_agent(args: argparse.Namespace) -> int:
+    """Moltis-style: one OS process, full Business runtime, no ``fairyclaw start``."""
+    project_root, config_dir, config_values = _prepare_project_config(no_sync_config=True)
+    _pin_cli_project_env(project_root, config_dir, config_values)
+    if bool(getattr(args, "json_only", False)):
+        from fairyclaw.config.settings import settings as _fc_settings
+
+        # Machine-readable one-liner: avoid INFO lines on stderr/stdout from the runtime.
+        if (_fc_settings.log_level or "INFO").upper() in {"DEBUG", "INFO"}:
+            _fc_settings.log_level = "WARNING"
+    from fairyclaw.headless.one_shot import run_in_process_agent
+
+    map_path = _cli_session_map_path(_resolve_data_dir(project_root, config_values))
+    msg = (args.message or "").strip() or " ".join(args.text or []).strip()
+    if not msg:
+        raise RuntimeError("message is required: use --message or positional text")
+    session_name = (args.session or "").strip()
+    if not session_name:
+        raise RuntimeError("--session is required")
+
+    result = asyncio.run(
+        run_in_process_agent(
+            map_path=map_path,
+            session_name=session_name,
+            text=msg,
+            wait_idle=not bool(args.no_wait),
+            timeout_sec=float(args.timeout),
+            poll_sec=float(args.poll_interval),
+            min_wait_sec=float(args.min_wait_after_send),
+        )
+    )
+    out: dict[str, Any] = {"cli": "agent", **result}
+    if not bool(getattr(args, "json_only", False)):
+        reply = result.get("reply")
+        if isinstance(reply, str) and reply.strip():
+            print("Assistant:\n" + reply.strip() + "\n", flush=True)
+    print(json.dumps(out, ensure_ascii=False), flush=True)
+    return 0 if result.get("ok") else 1
 
 
 def _cmd_get(args: argparse.Namespace) -> int:
@@ -1038,7 +1156,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("help", help="Show benchmark CLI commands")
 
-    start = sub.add_parser("start", help="Build frontend and run business+gateway")
+    start = sub.add_parser("start", help="Build frontend and run Business + Gateway")
     start.add_argument("--skip-build", action="store_true", help="Skip npm build")
     start.add_argument("--force-build", action="store_true", help="Force npm build when web/ is present")
     start.add_argument("--no-proxy", action="store_true", help="Disable proxy env for child processes")
@@ -1099,8 +1217,93 @@ def build_parser() -> argparse.ArgumentParser:
     send.add_argument("text", nargs="+", help="Text content")
     send.add_argument("--session", default=None, help="Named session to reuse/create")
 
+    agent = sub.add_parser("agent", help="One-shot in-process run: no `start` (Moltis-style; loads planner+DB in this process)")
+    agent.add_argument("--message", default=None, help="User message text")
+    agent.add_argument("text", nargs="*", help="Message if --message is omitted (joined with spaces)")
+    agent.add_argument(
+        "--session",
+        required=True,
+        help="Session key (e.g. ClawBench session_id); reuses same mapping as `bench run`",
+    )
+    agent.add_argument("--timeout", type=float, default=2400.0, help="Max wall-clock seconds (default: 2400)")
+    agent.add_argument(
+        "--idle-seconds",
+        type=float,
+        default=3.0,
+        dest="idle_seconds",
+        help="Unchanged history seconds for success (default: 3)",
+    )
+    agent.add_argument(
+        "--poll-interval",
+        type=float,
+        default=0.5,
+        dest="poll_interval",
+        help="History poll interval (default: 0.5)",
+    )
+    agent.add_argument(
+        "--min-wait-after-send",
+        type=float,
+        default=2.0,
+        dest="min_wait_after_send",
+        help="Min seconds after send before idle can count (default: 2)",
+    )
+    agent.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="Only enqueue; do not wait for idle history (no ClawBench completion signal)",
+    )
+    agent.add_argument(
+        "--json-only",
+        action="store_true",
+        dest="json_only",
+        help="Do not print the Assistant: block; only print one JSON line (reply is still in the JSON)",
+    )
+
     get = sub.add_parser("get", help="Fetch full history by session name or session_id")
     get.add_argument("target", help="session name or session_id")
+
+    bench = sub.add_parser(
+        "bench",
+        help="ClawBench v2 integration (blocking until session history is stable; requires `fairyclaw start`)",
+    )
+    bench_sub = bench.add_subparsers(dest="bench_command", required=True)
+    bench_run = bench_sub.add_parser(
+        "run",
+        help="Send one user message and wait until sessions.history stops changing (for ClawBench adapters)",
+    )
+    bench_run.add_argument("text", nargs="+", help="User message body")
+    bench_run.add_argument(
+        "--session",
+        required=True,
+        help="Session name (mapped in cli_session_map.json; use a stable id from the harness)",
+    )
+    bench_run.add_argument(
+        "--timeout",
+        type=float,
+        default=2400.0,
+        help="Max wall-clock seconds (default: 2400)",
+    )
+    bench_run.add_argument(
+        "--idle-seconds",
+        type=float,
+        default=3.0,
+        dest="idle_seconds",
+        help="Seconds of unchanged history before success (default: 3)",
+    )
+    bench_run.add_argument(
+        "--poll-interval",
+        type=float,
+        default=0.5,
+        dest="poll_interval",
+        help="Seconds between history polls (default: 0.5)",
+    )
+    bench_run.add_argument(
+        "--min-wait-after-send",
+        type=float,
+        default=2.0,
+        dest="min_wait_after_send",
+        help="Minimum seconds after send before idle can succeed (default: 2)",
+    )
 
     sess = sub.add_parser("session", help="Session mapping management for benchmark CLI")
     sess_sub = sess.add_subparsers(dest="session_command", required=True)
@@ -1120,6 +1323,11 @@ def main() -> int:
             return _start(args)
         if args.command == "send":
             return _cmd_send(args)
+        if args.command == "agent":
+            return _cmd_agent(args)
+        if args.command == "bench":
+            if args.bench_command == "run":
+                return _cmd_bench_run(args)
         if args.command == "get":
             return _cmd_get(args)
         if args.command == "session":
