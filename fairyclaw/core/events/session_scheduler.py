@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from typing import Any
 
 from fairyclaw.config.settings import settings
@@ -29,6 +30,7 @@ from fairyclaw.core.events.payloads import (
 )
 from fairyclaw.core.events.plugin_dispatcher import EventPluginDispatcher
 from fairyclaw.core.events.runtime import get_user_gateway
+from fairyclaw.core.runtime.timer_runtime_store import get_timer_runtime_store
 from fairyclaw.infrastructure.database.models import SessionModel
 from fairyclaw.infrastructure.database.session import AsyncSessionLocal
 
@@ -53,6 +55,8 @@ class RuntimeSessionScheduler:
         self.state_lock = asyncio.Lock()
         self.debounce_tasks: dict[str, asyncio.Task[None]] = {}
         self.watchdog_task: asyncio.Task[None] | None = None
+        self.timer_watchdog_task: asyncio.Task[None] | None = None
+        self.timer_worker_id = f"timer_watchdog_{uuid.uuid4().hex[:8]}"
 
     async def start(self) -> None:
         subscribed: set[str] = set()
@@ -64,12 +68,17 @@ class RuntimeSessionScheduler:
             subscribed.add(normalized_type)
         await self.bus.start()
         self.watchdog_task = asyncio.create_task(self.heartbeat_watchdog())
+        self.timer_watchdog_task = asyncio.create_task(self.timer_watchdog())
 
     async def stop(self) -> None:
         if self.watchdog_task:
             self.watchdog_task.cancel()
             await asyncio.gather(self.watchdog_task, return_exceptions=True)
             self.watchdog_task = None
+        if self.timer_watchdog_task:
+            self.timer_watchdog_task.cancel()
+            await asyncio.gather(self.timer_watchdog_task, return_exceptions=True)
+            self.timer_watchdog_task = None
         for task in self.debounce_tasks.values():
             task.cancel()
         if self.debounce_tasks:
@@ -210,13 +219,14 @@ class RuntimeSessionScheduler:
             state.wakeup_queued = False
             if state.inflight:
                 return
-            if not state.has_mailbox_events():
+            allow_empty_mailbox = wakeup_source not in {"event_bus", "heartbeat_watchdog", "debounce_timer", "subtask_completed"}
+            if not state.has_mailbox_events() and not allow_empty_mailbox:
                 return
-            if not state.has_triggerable_mailbox_events():
+            if state.has_mailbox_events() and not state.has_triggerable_mailbox_events():
                 state.touch()
                 return
             state.inflight = True
-            consumed_events = state.consume_mailbox()
+            consumed_events = state.consume_mailbox() if state.has_mailbox_events() else []
         task_type, enabled_groups = self.resolve_runtime_preferences(consumed_events)
         is_sub_session = SUB_SESSION_MARKER in session_id
         if is_sub_session:
@@ -306,6 +316,75 @@ class RuntimeSessionScheduler:
                     )
                 )
 
+    async def timer_watchdog(self) -> None:
+        """Drive timer jobs by publishing synthetic user-message ticks."""
+        interval_seconds = 1
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                due_jobs = await get_timer_runtime_store().claim_due_jobs(worker_id=self.timer_worker_id, limit=20)
+            except Exception as exc:
+                logger.warning("timer watchdog failed to claim jobs: %s", exc)
+                continue
+            for job in due_jobs:
+                try:
+                    payload_text = str(job.payload or "").strip()
+                    tick_payload = {
+                        "job_id": job.job_id,
+                        "mode": job.mode.value,
+                        "owner_session_id": job.owner_session_id,
+                        "creator_session_id": job.creator_session_id,
+                        "run_count": int(job.run_count),
+                        "next_fire_at_ms": int(job.next_fire_at_ms),
+                        "payload": payload_text,
+                    }
+                    internal_user_text = (
+                        f"[TIMER_TICK] mode={job.mode.value} job_id={job.job_id} "
+                        f"run_index={int(job.run_count) + 1}"
+                    )
+                    if payload_text:
+                        internal_user_text = internal_user_text + f"\n[TIMER_PAYLOAD] {payload_text}"
+                    await self.bus.publish(
+                        RuntimeEvent(
+                            type=EventType.USER_MESSAGE_RECEIVED,
+                            session_id=job.owner_session_id,
+                            payload={
+                                "trigger_turn": True,
+                                "task_type": "general",
+                                "internal_user_text": internal_user_text,
+                                "timer_tick": tick_payload,
+                            },
+                            source="timer_watchdog",
+                        )
+                    )
+                    uwg = get_user_gateway()
+                    if uwg is not None:
+                        await uwg.emit_timer_tick(
+                            job.owner_session_id,
+                            job_id=job.job_id,
+                            mode=job.mode.value,
+                            owner_session_id=job.owner_session_id,
+                            creator_session_id=job.creator_session_id,
+                            run_index=int(job.run_count) + 1,
+                            payload=payload_text,
+                            next_fire_at_ms=int(job.next_fire_at_ms),
+                        )
+                    logger.info(
+                        "Timer tick published: job_id=%s mode=%s owner=%s run_index=%s",
+                        job.job_id,
+                        job.mode.value,
+                        job.owner_session_id,
+                        int(job.run_count) + 1,
+                    )
+                    await get_timer_runtime_store().mark_job_result(job_id=job.job_id, success=True)
+                except Exception as exc:
+                    logger.exception("Timer tick processing failed: job_id=%s error=%s", job.job_id, exc)
+                    await get_timer_runtime_store().mark_job_result(
+                        job_id=job.job_id,
+                        success=False,
+                        error_message=f"timer tick processing failed: {exc}",
+                    )
+
     async def on_event(self, event: RuntimeEvent) -> None:
         """Route runtime events through a single scheduler entrypoint."""
         normalized_type = event_type_value(event.type)
@@ -323,6 +402,29 @@ class RuntimeSessionScheduler:
     async def _handle_user_message(self, event: RuntimeEvent) -> None:
         parsed = UserMessageReceivedEventPayload.from_runtime_event(event)
         trigger_turn = parsed.trigger_turn
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        internal_user_text = payload.get("internal_user_text")
+        if isinstance(internal_user_text, str) and internal_user_text.strip():
+            try:
+                async with AsyncSessionLocal() as db:
+                    from fairyclaw.core.agent.context.history_ir import SessionMessageBlock, SessionMessageRole
+                    from fairyclaw.core.agent.session.memory import PersistentMemory
+                    from fairyclaw.core.domain import ContentSegment
+                    from fairyclaw.infrastructure.database.repository import EventRepository
+
+                    memory = PersistentMemory(EventRepository(db))
+                    msg = SessionMessageBlock.from_segments(
+                        SessionMessageRole.USER,
+                        (ContentSegment.text_segment(internal_user_text.strip()),),
+                    )
+                    if msg is not None:
+                        await memory.add_session_event(session_id=event.session_id, message=msg)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to persist internal_user_text into session history: session=%s error=%s",
+                    event.session_id,
+                    exc,
+                )
         schedule_debounce = False
         async with self.state_lock:
             state = self.get_or_create_state(event.session_id)

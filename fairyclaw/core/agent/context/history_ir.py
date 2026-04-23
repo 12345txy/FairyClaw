@@ -12,9 +12,9 @@ from typing import Iterable
 from fairyclaw.core.domain import ContentSegment, SegmentType
 
 _FILE_ATTACH_USAGE = (
-    "会话文件 ID（请完整复制，勿截断或编造）：{file_id}\n"
-    "向子代理传递该文件时，请将此 ID 原样写入 delegate_task 的 attachments 数组；"
-    "可先调用 list_session_files 核对。禁止使用 file_id_ 前缀或自拟 ID。"
+    "Session file ID (copy exactly, do not truncate or invent): {file_id}\n"
+    "When passing this file to a sub-agent, put this ID unchanged in the delegate_task attachments array. "
+    "You can call list_session_files to verify first. Do not use a file_id_ prefix or fabricated IDs."
 )
 
 
@@ -25,7 +25,7 @@ def _file_segment_llm_text(segment: ContentSegment) -> str:
     usage = _FILE_ATTACH_USAGE.format(file_id=fid)
     if hint:
         return f"{hint}\n\n{usage}"
-    return f"用户上传了一个会话文件。\n\n{usage}"
+    return f"The user uploaded a session file.\n\n{usage}"
 
 
 def _segments_need_openai_multipart(segments: tuple[ContentSegment, ...]) -> bool:

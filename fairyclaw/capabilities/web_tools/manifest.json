@@ -6,7 +6,7 @@
   "capabilities": [
     {
       "name": "web_search",
-      "description": "Search the internet for information using DuckDuckGo. Use this to find current events, documentation, or facts.",
+      "description": "Search the internet for information using DuckDuckGo. Use this to find current events, documentation, or facts. Plan first: start with one focused query, review results, then decide whether another search is necessary. Avoid repetitive query loops; if enough evidence is collected, stop searching and synthesize.",
       "type": "Tool",
       "schema": {
         "parameters": {
@@ -30,7 +30,7 @@
     },
     {
       "name": "visit_page",
-      "description": "Visit a web page and extract its text content. Use this to read documentation, news articles, or other web content found via search.",
+      "description": "Visit a web page and extract its text content. Use this to read documentation, news articles, or other web content found via search. Do not chain endless page hops: visit only pages that directly answer the task, cap exploration to a small set of high-signal URLs, and stop once required facts are confirmed.",
       "type": "Tool",
       "schema": {
         "parameters": {
@@ -49,7 +49,7 @@
     },
     {
       "name": "download_file",
-      "description": "Download a file from a URL and save it to a specified local path. Supports images and arbitrary binary/text files.",
+      "description": "Download a file from a URL and save it to a specified local path. Supports images and arbitrary binary/text files. Download only when the file is explicitly needed for the task deliverable; avoid bulk or speculative downloads.",
       "type": "Tool",
       "schema": {
         "parameters": {

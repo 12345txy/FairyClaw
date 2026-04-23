@@ -28,6 +28,7 @@ def test_cmd_help_prints_benchmark_commands(capsys: pytest.CaptureFixture[str]) 
     out = capsys.readouterr().out
     assert "fairyclaw help" in out
     assert "fairyclaw send <text>" in out
+    assert "--workspace <path>" in out
     assert "fairyclaw session list" in out
 
 
@@ -45,19 +46,23 @@ def test_send_named_session_create_then_reuse(tmp_path: Path, monkeypatch: pytes
 
     monkeypatch.setattr(cli, "_ws_request", fake_ws)
 
-    rc1 = cli._cmd_send(argparse.Namespace(text=["hello"], session="bench"))
-    rc2 = cli._cmd_send(argparse.Namespace(text=["world"], session="bench"))
+    rc1 = cli._cmd_send(argparse.Namespace(text=["hello"], session="bench", workspace="/tmp/ws1"))
+    rc2 = cli._cmd_send(argparse.Namespace(text=["world"], session="bench", workspace="/tmp/ws2"))
     assert rc1 == 0
     assert rc2 == 0
     assert [op for op, _ in calls].count("session.create") == 1
     assert [op for op, _ in calls].count("chat.send") == 2
+    create_body = [body for op, body in calls if op == "session.create"][0]
+    assert create_body["meta"]["workspace_root"] == "/tmp/ws1"
 
 
 def test_send_without_session_creates_anonymous(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "_prepare_project_config", lambda no_sync_config: _stub_prepare(tmp_path))
     seq = {"n": 0}
+    calls: list[tuple[str, dict]] = []
 
-    def fake_ws(_cfg: dict[str, str], op: str, _body: dict) -> dict:
+    def fake_ws(_cfg: dict[str, str], op: str, body: dict) -> dict:
+        calls.append((op, body))
         if op == "session.create":
             seq["n"] += 1
             return {"session_id": f"sess_{seq['n']}"}
@@ -66,8 +71,11 @@ def test_send_without_session_creates_anonymous(tmp_path: Path, monkeypatch: pyt
         raise AssertionError(op)
 
     monkeypatch.setattr(cli, "_ws_request", fake_ws)
-    rc = cli._cmd_send(argparse.Namespace(text=["anon"], session=None))
+    rc = cli._cmd_send(argparse.Namespace(text=["anon"], session=None, workspace="/tmp/anon_ws"))
     assert rc == 0
+    assert seq["n"] == 1
+    create_body = [body for op, body in calls if op == "session.create"][0]
+    assert create_body["meta"]["workspace_root"] == "/tmp/anon_ws"
 
 
 def test_get_supports_name_or_id_and_returns_full_history(
@@ -123,7 +131,7 @@ def test_send_fails_when_gateway_not_started(tmp_path: Path, monkeypatch: pytest
     monkeypatch.setattr(cli, "_prepare_project_config", lambda no_sync_config: _stub_prepare(tmp_path))
 
     def fake_ws(_cfg: dict[str, str], _op: str, _body: dict) -> dict:
-        raise RuntimeError("Gateway not reachable. 请先执行 `fairyclaw start`。")
+        raise RuntimeError("Gateway not reachable. Run `fairyclaw start` first.")
 
     monkeypatch.setattr(cli, "_ws_request", fake_ws)
     with pytest.raises(RuntimeError, match="fairyclaw start"):
@@ -138,7 +146,7 @@ def test_main_send_reports_friendly_error_without_traceback(
     monkeypatch.setattr(cli, "_prepare_project_config", lambda no_sync_config: _stub_prepare(tmp_path))
 
     def fake_ws(_cfg: dict[str, str], _op: str, _body: dict) -> dict:
-        raise RuntimeError("Gateway not reachable. 请先执行 `fairyclaw start`。")
+        raise RuntimeError("Gateway not reachable. Run `fairyclaw start` first.")
 
     monkeypatch.setattr(cli, "_ws_request", fake_ws)
     monkeypatch.setattr("sys.argv", ["fairyclaw", "send", "hello"])

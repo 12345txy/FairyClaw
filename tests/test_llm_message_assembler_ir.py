@@ -71,7 +71,7 @@ def test_assemble_groups_consecutive_tool_rounds_into_one_assistant_message() ->
 def test_assemble_preserves_assistant_content_before_tool_batch() -> None:
     assembler = LlmMessageAssembler()
     history_entries = [
-        SessionMessageBlock(role=SessionMessageRole.ASSISTANT, body=TextBody(text="先并行查三个框架。")),
+        SessionMessageBlock(role=SessionMessageRole.ASSISTANT, body=TextBody(text="Check three frameworks in parallel first.")),
         ToolCallRound(
             tool_name="delegate_task",
             call_id="tc_1",
@@ -92,7 +92,7 @@ def test_assemble_preserves_assistant_content_before_tool_batch() -> None:
     )
     openai_messages = to_openai_messages(messages)
     assert openai_messages[1]["role"] == "assistant"
-    assert openai_messages[1]["content"] == "先并行查三个框架。"
+    assert openai_messages[1]["content"] == "Check three frameworks in parallel first."
     assert len(openai_messages[1]["tool_calls"]) == 2
     assert openai_messages[2]["tool_call_id"] == "tc_1"
     assert openai_messages[3]["tool_call_id"] == "tc_2"

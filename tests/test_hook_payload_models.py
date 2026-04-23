@@ -208,12 +208,12 @@ def test_before_llm_hook_preserves_tool_round_suffix_when_rebuilding_user_turn()
         turn=LlmTurnContext(
             llm_messages=[
                 LlmChatMessage(role="system", content="system"),
-                LlmChatMessage(role="assistant", content="先查一下", tool_calls=[LlmToolCallRequest("tc_1", "search_web", '{"q":"x"}')]),
+                LlmChatMessage(role="assistant", content="Search first.", tool_calls=[LlmToolCallRequest("tc_1", "search_web", '{"q":"x"}')]),
                 LlmChatMessage(role="tool", tool_call_id="tc_1", name="search_web", content="result"),
-                LlmChatMessage(role="user", content="继续"),
+                LlmChatMessage(role="user", content="Continue"),
             ],
             history_items=[
-                SessionMessageBlock(role=SessionMessageRole.ASSISTANT, body=TextBody(text="先查一下")),
+                SessionMessageBlock(role=SessionMessageRole.ASSISTANT, body=TextBody(text="Search first.")),
                 ToolCallRound(
                     tool_name="search_web",
                     call_id="tc_1",
@@ -221,7 +221,7 @@ def test_before_llm_hook_preserves_tool_round_suffix_when_rebuilding_user_turn()
                     tool_result="result",
                 ),
             ],
-            user_turn=UserTurn(message=SessionMessageBlock(role=SessionMessageRole.USER, body=TextBody(text="继续"))),
+            user_turn=UserTurn(message=SessionMessageBlock(role=SessionMessageRole.USER, body=TextBody(text="Continue"))),
             session_id="sess_1",
             task_type="general",
             is_sub_session=False,
@@ -258,12 +258,12 @@ def test_before_llm_hook_preserves_injected_system_messages_during_rebuild() -> 
                 LlmChatMessage(role="system", content="system"),
                 LlmChatMessage(role="system", content="[RecalledMemory]\n1. fact\n[/RecalledMemory]"),
                 LlmChatMessage(role="assistant", content="older assistant"),
-                LlmChatMessage(role="user", content="继续"),
+                LlmChatMessage(role="user", content="Continue"),
             ],
             history_items=[
                 SessionMessageBlock(role=SessionMessageRole.ASSISTANT, body=TextBody(text="older assistant")),
             ],
-            user_turn=UserTurn(message=SessionMessageBlock(role=SessionMessageRole.USER, body=TextBody(text="继续"))),
+            user_turn=UserTurn(message=SessionMessageBlock(role=SessionMessageRole.USER, body=TextBody(text="Continue"))),
             session_id="sess_1",
             task_type="general",
             is_sub_session=False,

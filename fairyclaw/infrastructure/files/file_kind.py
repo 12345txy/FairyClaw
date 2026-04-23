@@ -14,40 +14,40 @@ _GENERIC_NAMES: Final[frozenset[str]] = frozenset({"upload", "unnamed", ""})
 
 def _label_from_mime(mime: str | None) -> str:
     if not mime:
-        return "未知类型"
+        return "unknown type"
     m = mime.split(";")[0].strip().lower()
     table: dict[str, str] = {
-        "image/png": "PNG 图片",
-        "image/jpeg": "JPEG 图片",
-        "image/jpg": "JPEG 图片",
-        "image/gif": "GIF 图片",
-        "image/webp": "WebP 图片",
-        "image/svg+xml": "SVG 矢量图",
-        "image/bmp": "BMP 图片",
-        "image/tiff": "TIFF 图片",
-        "application/pdf": "PDF 文档",
-        "text/plain": "纯文本",
-        "text/markdown": "Markdown 文本",
-        "text/html": "HTML 文档",
-        "application/json": "JSON 文本",
-        "application/zip": "ZIP 压缩包",
-        "application/x-tar": "TAR 归档",
-        "application/gzip": "GZIP 压缩包",
-        "audio/mpeg": "MP3 音频",
-        "audio/wav": "WAV 音频",
-        "video/mp4": "MP4 视频",
+        "image/png": "PNG image",
+        "image/jpeg": "JPEG image",
+        "image/jpg": "JPEG image",
+        "image/gif": "GIF image",
+        "image/webp": "WebP image",
+        "image/svg+xml": "SVG vector image",
+        "image/bmp": "BMP image",
+        "image/tiff": "TIFF image",
+        "application/pdf": "PDF document",
+        "text/plain": "plain text",
+        "text/markdown": "Markdown text",
+        "text/html": "HTML document",
+        "application/json": "JSON text",
+        "application/zip": "ZIP archive",
+        "application/x-tar": "TAR archive",
+        "application/gzip": "GZIP archive",
+        "audio/mpeg": "MP3 audio",
+        "audio/wav": "WAV audio",
+        "video/mp4": "MP4 video",
     }
     if m in table:
         return table[m]
     if m.startswith("image/"):
-        return "图片"
+        return "image"
     if m.startswith("video/"):
-        return "视频"
+        return "video"
     if m.startswith("audio/"):
-        return "音频"
+        return "audio"
     if m.startswith("text/"):
-        return "文本"
-    return "文件"
+        return "text"
+    return "file"
 
 
 def describe_user_upload_for_llm(
@@ -56,7 +56,7 @@ def describe_user_upload_for_llm(
     mime_type: str | None = None,
     filename: str | None = None,
 ) -> str:
-    """One short Chinese line: what the user uploaded, preferring magic-byte sniffing."""
+    """One short English line describing uploaded content."""
     kind = filetype.guess(content) if content else None
     effective_mime: str | None = kind.mime if kind else None
     if effective_mime is None and mime_type:
@@ -65,8 +65,8 @@ def describe_user_upload_for_llm(
         guessed, _ = mimetypes.guess_type(filename)
         effective_mime = guessed
     label = _label_from_mime(effective_mime)
-    base = f"用户上传了一个 {label} 类型的文件。"
+    base = f"The user uploaded a file of type {label}."
     fn = (filename or "").strip()
     if fn and fn not in _GENERIC_NAMES:
-        return f"{base} 原始文件名：{fn}。"
+        return f"{base} Original filename: {fn}."
     return base

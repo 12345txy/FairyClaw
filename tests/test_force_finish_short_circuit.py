@@ -57,7 +57,7 @@ def _build_planner() -> Planner:
     planner = Planner()
     planner._resolve_tools_for_session = lambda session_id, selected_groups=None: ["CoreOperations"]
     planner._build_tool_specs = lambda enabled_groups: []
-    planner.context_builder.build = lambda history_items, user_segments, session_id, task_type: (
+    planner.context_builder.build = lambda history_items, user_segments, session_id, task_type, workspace_root=None: (
         [LlmChatMessage(role="user", content="hello")],
         [],
         None,

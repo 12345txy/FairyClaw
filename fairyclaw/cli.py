@@ -776,7 +776,7 @@ async def _ws_request_async(ws_url: str, token: str, op: str, body: dict[str, An
     except RuntimeError:
         raise
     except Exception as exc:
-        raise RuntimeError("Gateway not reachable. 请先执行 `fairyclaw start`。") from exc
+        raise RuntimeError("Gateway not reachable. Run `fairyclaw start` first.") from exc
 
 
 def _ws_request(config_values: dict[str, str], op: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -818,17 +818,17 @@ def _cmd_help(_args: argparse.Namespace, parser: argparse.ArgumentParser) -> int
     print("FairyClaw benchmark CLI commands:")
     print("  fairyclaw help")
     print("  fairyclaw send <text> [--session <name>] [--workspace <path>]")
-    print("  fairyclaw agent --session <name> --message '...'   # 单进程，无需 `start`（Moltis 式）")
-    print("  fairyclaw bench run --session <name> <text>...   # 需已 `fairyclaw start`")
+    print("  fairyclaw agent --session <name> --message '...'   # one process, no `start` (Moltis-style)")
+    print("  fairyclaw bench run --session <name> <text>...   # requires `fairyclaw start` first")
     print("  fairyclaw get <session_name_or_id>")
     print("  fairyclaw session list")
     print("  fairyclaw session rm <session_name_or_id>")
     print("")
     print("Notes:")
-    print("  - `send` / `bench` / `get` 需先 `fairyclaw start`；评测可单独用 `fairyclaw agent`。")
-    print("  - 相同 --session 会复用同一会话；不带 --session 会新建匿名会话。")
-    print("  - 新建会话时可用 --workspace 指定工作区路径；复用已存在会话时该参数会被忽略。")
-    print("  - session 名称与 session_id 的映射保存在 <FAIRYCLAW_DATA_DIR>/cli_session_map.json。")
+    print("  - Run `fairyclaw start` first for `send`, `bench`, and `get`; use `fairyclaw agent` to run without a daemon.")
+    print("  - Same --session name reuses the session; omit --session to create an anonymous session.")
+    print("  - --workspace only applies when creating a new session; it is ignored for reused sessions.")
+    print("  - Session-name mappings are stored in <FAIRYCLAW_DATA_DIR>/cli_session_map.json.")
     print("")
     parser.print_help()
     return 0
@@ -1077,6 +1077,13 @@ def _start(args: argparse.Namespace) -> int:
     for key, value in config_values.items():
         if key and value and key not in env:
             env[key] = value
+
+    # Ensure Gateway serves the latest local build when source tree has web/dist.
+    # Otherwise resolve_web_dist_dir() may pick packaged fairyclaw/web_dist first.
+    if web_dir is not None:
+        local_web_dist = (web_dir / "dist").resolve()
+        if (local_web_dist / "index.html").is_file():
+            env["FAIRYCLAW_WEB_DIST_DIR"] = str(local_web_dist)
 
     # Pin paths to project config/ and data/ so merges from fairyclaw.env cannot point elsewhere.
     data_resolved = data_dir.resolve()

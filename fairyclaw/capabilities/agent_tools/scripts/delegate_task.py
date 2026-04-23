@@ -14,11 +14,14 @@ from fairyclaw.core.capabilities.models import ToolContext
 from fairyclaw.core.domain import ContentSegment
 from fairyclaw.core.events.bus import EventType
 from fairyclaw.core.events.runtime import get_user_gateway, publish_runtime_event
+from fairyclaw.core.runtime.session_runtime_store import get_session_runtime_store
 from fairyclaw.core.agent.session.global_state import bind_sub_session, get_or_create_subtask_state
 from fairyclaw.core.agent.session.memory import PersistentMemory
 from fairyclaw.infrastructure.database.models import FileModel, GatewaySessionRouteModel, SessionModel
 from fairyclaw.infrastructure.database.repository import EventRepository, FileRepository
 from fairyclaw.infrastructure.database.session import AsyncSessionLocal
+
+from .dc_contract import validate_done_when
 
 logger = logging.getLogger(__name__)
 
@@ -121,12 +124,17 @@ async def execute(args: Dict[str, Any], context: ToolContext) -> str:
     instruction = str(args.get("instruction") or "")
     background = args.get("background", "")
     task_type = args.get("task_type", "general")
+    done_when_raw = args.get("done_when")
     raw_attachments = args.get("attachments", [])
     if not isinstance(raw_attachments, list):
         raw_attachments = []
     attachments = [str(a).strip() for a in raw_attachments if str(a).strip()]
     if not instruction:
         return "Error: instruction is required."
+    done_when_check = validate_done_when(done_when_raw)
+    if not done_when_check.ok:
+        return f"Error: invalid done_when: {done_when_check.error}"
+    done_when = list(done_when_check.done_when or [])
 
     if not context.planner:
         return "Error: Planner instance not available in context. Cannot spawn sub-agent."
@@ -136,6 +144,14 @@ async def execute(args: Dict[str, Any], context: ToolContext) -> str:
         return "Error: Maximum Sub-Agent nesting depth reached. You must complete this task yourself without delegating further."
 
     main_session_id = context.session_id
+    inherited_workspace_root = ""
+    if context.runtime_context is not None and context.runtime_context.workspace_root:
+        inherited_workspace_root = str(context.runtime_context.workspace_root).strip()
+    if not inherited_workspace_root:
+        try:
+            inherited_workspace_root = (await get_session_runtime_store().get(main_session_id)).workspace_root
+        except Exception:
+            inherited_workspace_root = ""
 
     if attachments:
         try:
@@ -160,9 +176,17 @@ async def execute(args: Dict[str, Any], context: ToolContext) -> str:
                 title=f"{task_type} | {short_instruction}",
                 meta={
                     "parent_session_id": main_session_id,
+                    "workspace_root": inherited_workspace_root,
                     "task_type": str(task_type),
                     "instruction": instruction,
                     "subtask_status": f"running:{task_type}",
+                    "done_when": done_when,
+                    "dc_state": {
+                        "false_finish_count": 0,
+                        "last_status": "initialized",
+                        "last_failed_rules": [],
+                        "last_checked_at_ms": int(time.time() * 1000),
+                    },
                 },
             )
             local_db.add(sub_session_model)

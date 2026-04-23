@@ -36,6 +36,7 @@ from fairyclaw.core.agent.planning.tool_logging import make_short_tool_call_id, 
 from fairyclaw.core.agent.session.global_state import get_session_lock
 from fairyclaw.core.agent.session.memory import PersistentMemory
 from fairyclaw.core.events.runtime import get_user_gateway
+from fairyclaw.core.runtime.session_runtime_store import get_session_runtime_store
 from fairyclaw.core.agent.types import SessionKind, TurnRequest, TurnRuntimePrefs
 from fairyclaw.core.domain import ContentSegment
 from fairyclaw.core.events.bus import EventType
@@ -129,6 +130,15 @@ class Planner(BasePlanner):
                 is_sub_session=policy.kind is SessionKind.SUB,
             )
             if turn_result.force_finish is not None:
+                if turn_result.message_text:
+                    await self._handle_text_fallback(
+                        request.session_id,
+                        turn_result.message_text,
+                        request.memory,
+                        usage_prompt_tokens=turn_result.usage_prompt_tokens,
+                        usage_completion_tokens=turn_result.usage_completion_tokens,
+                        usage_total_tokens=turn_result.usage_total_tokens,
+                    )
                 return
             if not turn_result.tool_calls:
                 await policy.handle_text_response(
@@ -168,6 +178,7 @@ class Planner(BasePlanner):
         request: TurnRequest,
         is_sub_session: bool,
     ) -> PreparedTurnResult:
+        runtime_context = await get_session_runtime_store().get(request.session_id)
         history_items = list(request.history_items)
         if request.memory:
             history_items = await request.memory.get_history(request.session_id)
@@ -213,6 +224,7 @@ class Planner(BasePlanner):
             user_segments=request.user_segments,
             session_id=request.session_id,
             task_type=task_type,
+            workspace_root=runtime_context.workspace_root,
         )
         always_enabled_groups = [
             name
