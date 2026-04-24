@@ -823,7 +823,7 @@ def _cmd_help(_args: argparse.Namespace, parser: argparse.ArgumentParser) -> int
     print("  fairyclaw session rm <session_name_or_id>")
     print("")
     print("Notes:")
-    print("  - Run `fairyclaw start` first for `send`, `bench`, and `get`; use `fairyclaw agent` to run without a daemon.")
+    print("  - Run `fairyclaw start` first for `send` and `get`; use `fairyclaw agent` to run without a daemon.")
     print("  - Same --session name reuses the session; omit --session to create an anonymous session.")
     print("  - --workspace only applies when creating a new session; it is ignored for reused sessions.")
     print("  - Session-name mappings are stored in <FAIRYCLAW_DATA_DIR>/cli_session_map.json.")
