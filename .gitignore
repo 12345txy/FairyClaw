@@ -129,6 +129,7 @@ env.bak/
 venv.bak/
 config/fairyclaw.env
 config/llm_endpoints.yaml
+config/model_id.md
 onebot_adapter/.env
 openclaw/
 
